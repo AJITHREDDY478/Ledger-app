@@ -42,6 +42,25 @@ h1 {
   margin: 0;
 }
 
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.app-logo {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+}
+
+.app-tagline {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .subtitle {
   margin-top: 6px;
   color: var(--muted);

@@ -160,7 +160,13 @@ function App() {
   return (
     <main className="app-shell">
       <section className="card">
-        <h1>Ledger</h1>
+        <header className="app-header">
+          <img src="/logo.svg" alt="Ledger logo" className="app-logo" />
+          <div>
+            <h1>Ledger</h1>
+            <p className="app-tagline">Track Credits &amp; Debits</p>
+          </div>
+        </header>
 
         <form className="entry-form" onSubmit={handleAddEntry}>
           <input
