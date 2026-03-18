@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 
 const STORAGE_KEY = 'ledger-entries-v3'
-const SEED_KEY = 'ledger-seed-version'
-const SEED_VERSION = 3
+
+const defaultEntries = []
 
 function formatDateTime(value) {
   if (!value) return '-'
@@ -20,37 +20,8 @@ function formatDateTime(value) {
   return `${day}-${month}-${year} ${hour12}:${minutes} ${meridiem}`
 }
 
-const defaultEntries = [
-  { id: 1,  name: 'Ajith Kumar',   work: 'Printing',         date: '2026-01-03T09:15:00.000Z', credit: 5000,  debit: 0    },
-  { id: 2,  name: 'Ravi Shankar',  work: 'Logo Design',      date: '2026-01-07T10:30:00.000Z', credit: 0,     debit: 1200 },
-  { id: 3,  name: 'Meena Devi',    work: 'Web Development',  date: '2026-01-12T11:00:00.000Z', credit: 8500,  debit: 0    },
-  { id: 4,  name: 'Suresh Babu',   work: 'Packaging',        date: '2026-01-18T14:20:00.000Z', credit: 0,     debit: 650  },
-  { id: 5,  name: 'Priya Nair',    work: 'Photography',      date: '2026-01-25T16:45:00.000Z', credit: 3200,  debit: 0    },
-  { id: 6,  name: 'Kiran Raj',     work: 'Flex Board',       date: '2026-02-02T08:00:00.000Z', credit: 0,     debit: 900  },
-  { id: 7,  name: 'Anitha S',      work: 'Brochure',         date: '2026-02-06T09:30:00.000Z', credit: 2100,  debit: 0    },
-  { id: 8,  name: 'Deepak Menon',  work: 'Visiting Cards',   date: '2026-02-10T11:15:00.000Z', credit: 0,     debit: 400  },
-  { id: 9,  name: 'Lakshmi P',     work: 'Banner Printing',  date: '2026-02-14T13:00:00.000Z', credit: 4700,  debit: 0    },
-  { id: 10, name: 'Vijay Thomas',  work: 'Sticker Design',   date: '2026-02-19T15:30:00.000Z', credit: 0,     debit: 750  },
-  { id: 11, name: 'Santha Mary',   work: 'Letterhead',       date: '2026-02-23T10:00:00.000Z', credit: 1800,  debit: 0    },
-  { id: 12, name: 'Arun Prakash',  work: 'T-Shirt Print',    date: '2026-03-01T09:45:00.000Z', credit: 0,     debit: 2200 },
-  { id: 13, name: 'Divya R',       work: 'Catalogue',        date: '2026-03-04T11:30:00.000Z', credit: 6300,  debit: 0    },
-  { id: 14, name: 'Manoj Kumar',   work: 'Offset Printing',  date: '2026-03-07T14:00:00.000Z', credit: 0,     debit: 3100 },
-  { id: 15, name: 'Reshma Biju',   work: 'Social Media Post',date: '2026-03-10T10:15:00.000Z', credit: 2800,  debit: 0    },
-  { id: 16, name: 'George P',      work: 'Envelope Print',   date: '2026-03-12T16:00:00.000Z', credit: 0,     debit: 520  },
-  { id: 17, name: 'Nisha Antony',  work: 'Digital Marketing',date: '2026-03-14T09:00:00.000Z', credit: 5500,  debit: 0    },
-  { id: 18, name: 'Biju Varghese', work: 'Invoice Design',   date: '2026-03-16T11:45:00.000Z', credit: 0,     debit: 870  },
-  { id: 19, name: 'Sreeja Mohan',  work: 'Poster Design',    date: '2026-03-17T14:30:00.000Z', credit: 4100,  debit: 0    },
-  { id: 20, name: 'Rahul Das',     work: 'Label Printing',   date: '2026-03-19T08:50:00.000Z', credit: 0,     debit: 1350 },
-]
-
 function App() {
   const [entries, setEntries] = useState(() => {
-    const savedSeed = Number(localStorage.getItem(SEED_KEY) || 0)
-    if (savedSeed < SEED_VERSION) {
-      localStorage.setItem(SEED_KEY, String(SEED_VERSION))
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultEntries))
-      return defaultEntries
-    }
     const saved = localStorage.getItem(STORAGE_KEY)
     if (!saved) return defaultEntries
     try {
