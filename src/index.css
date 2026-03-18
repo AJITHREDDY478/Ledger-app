@@ -77,6 +77,13 @@ h1 {
   width: 100%;
 }
 
+.date-field {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .search-input {
   width: 100%;
   margin-bottom: 14px;

@@ -199,12 +199,15 @@ function App() {
             value={form.debit}
             onChange={handleChange}
           />
-          <input
-            name="date"
-            type="date"
-            value={form.date}
-            onChange={handleChange}
-          />
+          <label className="date-field">
+            Date
+            <input
+              name="date"
+              type="date"
+              value={form.date}
+              onChange={handleChange}
+            />
+          </label>
           <button type="submit" style={{ gridColumn: 'span 2' }}>Add Row</button>
         </form>
 
@@ -244,7 +247,7 @@ function App() {
               ))}
               {paginatedRows.length === 0 && (
                 <tr>
-                  <td colSpan="7">No matching rows found.</td>
+                  <td colSpan="7">No ledgers</td>
                 </tr>
               )}
             </tbody>
