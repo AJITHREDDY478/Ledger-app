@@ -1,0 +1,219 @@
+:root {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --text: #17202a;
+  --muted: #566573;
+  --line: #d5d8dc;
+  --accent: #0f766e;
+  --accent-2: #115e59;
+  --danger: #b91c1c;
+  --danger-2: #991b1b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: radial-gradient(circle at top right, #eafaf1, var(--bg) 35%);
+  color: var(--text);
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+}
+
+.card {
+  width: min(1080px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 14px 34px rgb(15 23 42 / 8%);
+  overflow: hidden;
+}
+
+h1 {
+  margin: 0;
+}
+
+.subtitle {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.entry-form {
+  margin: 18px 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.entry-form input {
+  width: 100%;
+}
+
+.search-input {
+  width: 100%;
+  margin-bottom: 14px;
+}
+
+.pagination-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  margin-top: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.pagination-toolbar label {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pagination-toolbar span {
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.pagination-toolbar button {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+.pagination-toolbar select {
+  flex-shrink: 0;
+}
+
+.pagination-toolbar select {
+  font: inherit;
+  border-radius: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.inline-input {
+  width: 68px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  background: #f8fafc;
+}
+
+.inline-input:focus {
+  outline: 2px solid var(--accent);
+  background: #ffffff;
+}
+
+input,
+button {
+  font: inherit;
+  border-radius: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+}
+
+button {
+  cursor: pointer;
+  border: 0;
+  background: var(--accent);
+  color: #ffffff;
+}
+
+button:hover {
+  background: var(--accent-2);
+}
+
+button.ghost {
+  background: #475569;
+}
+
+button.ghost:hover {
+  background: #334155;
+}
+
+button.danger {
+  background: var(--danger);
+  padding: 6px 9px;
+}
+
+button.danger:hover {
+  background: var(--danger-2);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  padding: 8px 6px;
+  white-space: nowrap;
+}
+
+thead th,
+tfoot th {
+  background: #f8fafc;
+}
+
+@media (max-width: 680px) {
+  .app-shell {
+    padding: 10px;
+    display: block;
+  }
+
+  .card {
+    padding: 14px;
+    border-radius: 10px;
+  }
+
+  .entry-form {
+    grid-template-columns: 1fr;
+  }
+
+  .entry-form button {
+    width: 100%;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+  }
+
+  table {
+    min-width: 660px;
+    font-size: 13px;
+  }
+
+  th,
+  td {
+    padding: 8px;
+  }
+
+  button.danger {
+    white-space: nowrap;
+  }
+}
