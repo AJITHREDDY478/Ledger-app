@@ -84,6 +84,32 @@ h1 {
   color: var(--muted);
 }
 
+.file-name-hint {
+  font-size: 12px;
+  color: var(--accent);
+  margin-top: 2px;
+}
+
+.file-download-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.file-download-link:hover {
+  text-decoration: underline;
+}
+
+.entry-form textarea {
+  font: inherit;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  width: 100%;
+  color: var(--text);
+}
+
 .search-input {
   width: 100%;
   margin-bottom: 14px;

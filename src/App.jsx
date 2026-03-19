@@ -54,6 +54,9 @@ function Ledger({ onLogout }) {
     date: '',
     credit: '',
     debit: '',
+    remarks: '',
+    file: null,
+    fileName: '',
   })
   const [searchText, setSearchText] = useState('')
   const [rowsPerPage, setRowsPerPage] = useState(20)
@@ -106,6 +109,7 @@ function Ledger({ onLogout }) {
         row.credit,
         row.debit,
         row.balance,
+        row.remarks,
       ]
         .join(' ')
         .toLowerCase()
@@ -140,8 +144,17 @@ function Ledger({ onLogout }) {
   }, [currentPage, totalPages])
 
   function handleChange(event) {
-    const { name, value } = event.target
-    setForm((prev) => ({ ...prev, [name]: value }))
+    const { name, value, files } = event.target
+    if (name === 'file') {
+      const picked = files[0]
+      if (!picked) return
+      const reader = new FileReader()
+      reader.onload = (e) =>
+        setForm((prev) => ({ ...prev, file: e.target.result, fileName: picked.name }))
+      reader.readAsDataURL(picked)
+    } else {
+      setForm((prev) => ({ ...prev, [name]: value }))
+    }
   }
 
   function handleAddEntry(event) {
@@ -165,10 +178,13 @@ function Ledger({ onLogout }) {
       date: dateValue,
       credit,
       debit,
+      remarks: form.remarks.trim(),
+      file: form.file || null,
+      fileName: form.fileName || '',
     }
 
     setEntries((prev) => [...prev, nextEntry])
-    setForm({ name: '', work: '', date: '', credit: '', debit: '' })
+    setForm({ name: '', work: '', date: '', credit: '', debit: '', remarks: '', file: null, fileName: '' })
     if (!searchText.trim()) {
       setCurrentPage(Math.ceil((entries.length + 1) / rowsPerPage))
     }
@@ -236,6 +252,24 @@ function Ledger({ onLogout }) {
                   onChange={handleChange}
                 />
               </label>
+              <textarea
+                name="remarks"
+                placeholder="Remarks (optional)"
+                value={form.remarks}
+                onChange={handleChange}
+                rows={2}
+                style={{ gridColumn: 'span 2', resize: 'vertical' }}
+              />
+              <label className="date-field" style={{ gridColumn: 'span 2' }}>
+                Attachment (optional)
+                <input
+                  name="file"
+                  type="file"
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                  onChange={handleChange}
+                />
+                {form.fileName && <span className="file-name-hint">📎 {form.fileName}</span>}
+              </label>
               <button type="submit" style={{ gridColumn: 'span 2' }}>Save Ledger</button>
             </form>
           </>
@@ -266,6 +300,8 @@ function Ledger({ onLogout }) {
                     <th>Credit</th>
                     <th>Debit</th>
                     <th>Balance</th>
+                    <th>Remarks</th>
+                    <th>Attachment</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -278,11 +314,19 @@ function Ledger({ onLogout }) {
                       <td data-label="Credit">{row.credit}</td>
                       <td data-label="Debit">{row.debit}</td>
                       <td data-label="Balance">{row.balance}</td>
+                      <td data-label="Remarks">{row.remarks || '-'}</td>
+                      <td data-label="Attachment">
+                        {row.file ? (
+                          <a href={row.file} download={row.fileName} className="file-download-link">
+                            📎 {row.fileName}
+                          </a>
+                        ) : '-'}
+                      </td>
                     </tr>
                   ))}
                   {paginatedRows.length === 0 && (
                     <tr>
-                      <td colSpan="7">No ledgers</td>
+                      <td colSpan="9">No ledgers</td>
                     </tr>
                   )}
                 </tbody>
@@ -292,6 +336,8 @@ function Ledger({ onLogout }) {
                     <th>{searchText ? filteredTotals.credit : totals.credit}</th>
                     <th>{searchText ? filteredTotals.debit : totals.debit}</th>
                     <th>{searchText ? filteredTotals.balance : totals.balance}</th>
+                    <th />
+                    <th />
                   </tr>
                 </tfoot>
               </table>
