@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Login, isLoggedIn, SESSION_KEY } from './Login'
 
 const STORAGE_KEY = 'ledger-entries-v3'
 
@@ -21,6 +22,21 @@ function formatDateTime(value) {
 }
 
 function App() {
+  const [loggedIn, setLoggedIn] = useState(() => isLoggedIn())
+
+  if (!loggedIn) {
+    return <Login onLogin={() => setLoggedIn(true)} />
+  }
+
+  function handleLogout() {
+    sessionStorage.removeItem(SESSION_KEY)
+    setLoggedIn(false)
+  }
+
+  return <Ledger onLogout={handleLogout} />
+}
+
+function Ledger({ onLogout }) {
   const [entries, setEntries] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (!saved) return defaultEntries
@@ -162,10 +178,11 @@ function App() {
       <section className="card">
         <header className="app-header">
           <img src="/logo.svg" alt="Ledger logo" className="app-logo" />
-          <div>
+          <div className="app-header-text">
             <h1>Ledger</h1>
             <p className="app-tagline">Track Credits &amp; Debits</p>
           </div>
+          <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
         </header>
 
         <form className="entry-form" onSubmit={handleAddEntry}>

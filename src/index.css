@@ -142,9 +142,138 @@ button:disabled {
   background: #f8fafc;
 }
 
-.inline-input:focus {
+/* ── Login page ────────────────────────────────── */
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: radial-gradient(circle at top right, #eafaf1, var(--bg) 40%);
+}
+
+.login-card {
+  width: min(420px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 32px 28px;
+  box-shadow: 0 14px 34px rgb(15 23 42 / 10%);
+}
+
+.login-brand {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.login-brand h1 {
+  margin: 10px 0 4px;
+  font-size: 1.6rem;
+}
+
+.login-brand p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.login-logo {
+  width: 56px;
+  height: 56px;
+}
+
+.login-form {
+  display: grid;
+  gap: 16px;
+}
+
+.login-field {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.login-field input {
+  width: 100%;
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.login-field input:focus {
   outline: 2px solid var(--accent);
-  background: #ffffff;
+}
+
+.password-wrap {
+  position: relative;
+  display: flex;
+}
+
+.password-wrap input {
+  flex: 1;
+  padding-right: 42px;
+}
+
+.toggle-pw {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  width: 40px;
+  background: transparent;
+  border: 0;
+  font-size: 16px;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 0;
+}
+
+.toggle-pw:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+.login-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.login-btn {
+  width: 100%;
+  padding: 11px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 8px;
+  margin-top: 4px;
+}
+
+/* ── App header with logout ─────────────────────── */
+.app-header-text {
+  flex: 1;
+}
+
+.logout-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--line) !important;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 8px;
+}
+
+.logout-btn:hover {
+  background: #f1f5f9 !important;
+  color: var(--text);
 }
 
 input,
