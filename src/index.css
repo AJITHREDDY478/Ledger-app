@@ -522,6 +522,10 @@ tfoot th {
 }
 
 @media (max-width: 680px) {
+  .back-btn {
+    display: none;
+  }
+
   .app-shell {
     padding: 10px;
     display: block;

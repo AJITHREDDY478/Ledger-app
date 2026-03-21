@@ -23,6 +23,13 @@ const MONTH_OPTIONS = [
 
 const defaultEntries = []
 
+const currencyFormatter = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
 function getTodayInputDate() {
   const now = new Date()
   const year = now.getFullYear()
@@ -52,6 +59,24 @@ function downloadBlob(content, fileName, mimeType) {
 
 function formatFilePart(value) {
   return value.trim().replace(/\s+/g, '-').toLowerCase() || 'statement'
+}
+
+function formatCurrency(value) {
+  return currencyFormatter.format(Number(value) || 0)
+}
+
+function formatAmount(value) {
+  return new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value) || 0)
+}
+
+function formatPdfCurrency(value) {
+  return new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value) || 0)
 }
 
 function toDateKey(value) {
@@ -410,18 +435,46 @@ function Ledger({ onLogout }) {
   function handleDownloadHistoryExcel() {
     if (!selectedClient || filteredHistoryRows.length === 0) return
 
-    const data = filteredHistoryRows.map((row) => ({
-      'Sl No': row.slNo,
-      Work: row.work,
-      Date: formatDateTime(row.date),
-      Credit: row.credit,
-      Debit: row.debit,
-      Balance: row.balance,
-      Remarks: row.remarks || '-',
-      Attachment: row.attachmentNames || '-',
-    }))
+    const rows = filteredHistoryRows.map((row) => [
+      row.slNo,
+      row.work,
+      formatDateTime(row.date),
+      formatPdfCurrency(row.credit),
+      formatPdfCurrency(row.debit),
+      formatPdfCurrency(row.balance),
+      row.remarks || '-',
+      row.attachmentNames || '-',
+    ])
 
-    const worksheet = XLSX.utils.json_to_sheet(data)
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      [`${selectedClient} - Mini Statement`],
+      [`Generated`, new Date().toLocaleString()],
+      [
+        'Total Transactions',
+        filteredHistoryRows.length,
+        'Credit (Rs)',
+        formatPdfCurrency(historyTotals.credit),
+        'Debit (Rs)',
+        formatPdfCurrency(historyTotals.debit),
+        'Balance (Rs)',
+        formatPdfCurrency(historyTotals.balance),
+      ],
+      [],
+      ['Sl No', 'Work', 'Date', 'Credit (Rs)', 'Debit (Rs)', 'Balance (Rs)', 'Remarks', 'Attachment'],
+      ...rows,
+    ])
+
+    worksheet['!cols'] = [
+      { wch: 8 },
+      { wch: 24 },
+      { wch: 22 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 20 },
+      { wch: 28 },
+    ]
+
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Mini Statement')
 
@@ -438,47 +491,136 @@ function Ledger({ onLogout }) {
     if (!selectedClient || filteredHistoryRows.length === 0) return
 
     const doc = new jsPDF({ unit: 'pt', format: 'a4' })
+    const pageWidth = doc.internal.pageSize.getWidth()
     const pageHeight = doc.internal.pageSize.getHeight()
-    const left = 40
-    let y = 46
+    const left = 36
+    const right = pageWidth - 36
+    const tableWidth = right - left
+    const baseRowHeight = 22
+    const bottomMargin = 40
+    const columns = [
+      { key: 'slNo', label: 'Sl No', width: 38, align: 'left' },
+      { key: 'date', label: 'Date', width: 104, align: 'left' },
+      { key: 'work', label: 'Work', width: 137, align: 'left' },
+      { key: 'credit', label: 'Credit (Rs)', width: 81, align: 'right' },
+      { key: 'debit', label: 'Debit (Rs)', width: 81, align: 'right' },
+      { key: 'balance', label: 'Balance (Rs)', width: 82, align: 'right' },
+    ]
 
-    doc.setFontSize(14)
-    doc.text(`${selectedClient} - Mini Statement`, left, y)
-    y += 18
+    let y = 42
 
-    doc.setFontSize(10)
-    doc.text(`Generated: ${new Date().toLocaleString()}`, left, y)
-    y += 14
-    doc.text(
-      `Transactions: ${filteredHistoryRows.length}  Credit: ${historyTotals.credit}  Debit: ${historyTotals.debit}  Balance: ${historyTotals.balance}`,
-      left,
-      y,
-    )
-    y += 16
+    function drawHeader() {
+      doc.setFontSize(16)
+      doc.setFont('helvetica', 'bold')
+      doc.text(`${selectedClient} - Mini Statement`, left, y)
+      y += 20
 
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'normal')
+      doc.text(`Generated: ${new Date().toLocaleString()}`, left, y)
+      y += 16
+
+      const summaryTop = y
+      const boxGap = 8
+      const boxWidth = (tableWidth - boxGap * 3) / 4
+      const boxHeight = 34
+      const summaryItems = [
+        ['Transactions', String(filteredHistoryRows.length)],
+        ['Credit (Rs)', formatPdfCurrency(historyTotals.credit)],
+        ['Debit (Rs)', formatPdfCurrency(historyTotals.debit)],
+        ['Balance (Rs)', formatPdfCurrency(historyTotals.balance)],
+      ]
+
+      summaryItems.forEach((item, index) => {
+        const x = left + index * (boxWidth + boxGap)
+        doc.setFillColor(250, 250, 250)
+        doc.setDrawColor(205, 210, 215)
+        doc.roundedRect(x, summaryTop, boxWidth, boxHeight, 4, 4, 'FD')
+        doc.setFontSize(8)
+        doc.setTextColor(90, 95, 100)
+        doc.text(item[0], x + 8, summaryTop + 11)
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(10)
+        doc.setTextColor(20, 25, 30)
+        doc.text(item[1], x + 8, summaryTop + 25)
+        doc.setFont('helvetica', 'normal')
+      })
+
+      y += boxHeight + 14
+
+      doc.setFillColor(244, 246, 248)
+      doc.rect(left, y, tableWidth, baseRowHeight, 'F')
+      doc.setDrawColor(180, 185, 190)
+      doc.rect(left, y, tableWidth, baseRowHeight)
+
+      let x = left
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(9)
+      columns.forEach((column) => {
+        doc.line(x, y, x, y + baseRowHeight)
+        const textX = column.align === 'right' ? x + column.width - 6 : x + 6
+        doc.text(column.label, textX, y + 14, { align: column.align === 'right' ? 'right' : 'left' })
+        x += column.width
+      })
+      doc.line(x, y, x, y + baseRowHeight)
+      y += baseRowHeight
+    }
+
+    function ensureSpace(requiredHeight) {
+      if (y + requiredHeight <= pageHeight - bottomMargin) return
+      doc.addPage()
+      y = 42
+      drawHeader()
+    }
+
+    drawHeader()
+
+    doc.setFont('helvetica', 'normal')
     doc.setFontSize(9)
-    doc.text('Sl  Date             Work                 Credit   Debit   Balance', left, y)
-    y += 10
-    doc.line(left, y, 555, y)
-    y += 12
 
     filteredHistoryRows.forEach((row) => {
-      if (y > pageHeight - 40) {
-        doc.addPage()
-        y = 40
+      const rowValues = {
+        slNo: String(row.slNo),
+        date: formatDateTime(row.date),
+        work: row.work || '-',
+        credit: formatPdfCurrency(row.credit),
+        debit: formatPdfCurrency(row.debit),
+        balance: formatPdfCurrency(row.balance),
       }
 
-      const text = [
-        String(row.slNo).padEnd(3),
-        formatDateTime(row.date).slice(0, 16).padEnd(16),
-        (row.work || '-').slice(0, 20).padEnd(20),
-        String(row.credit).padStart(6),
-        String(row.debit).padStart(6),
-        String(row.balance).padStart(8),
-      ].join('  ')
+      const wrappedCells = columns.map((column) => {
+        const text = rowValues[column.key]
+        if (column.align === 'right') return [text]
+        return doc.splitTextToSize(text, column.width - 12)
+      })
 
-      doc.text(text, left, y)
-      y += 12
+      const rowHeight = Math.max(
+        baseRowHeight,
+        ...wrappedCells.map((lines) => 8 + lines.length * 11),
+      )
+
+      ensureSpace(rowHeight)
+
+      doc.rect(left, y, tableWidth, rowHeight)
+
+      let x = left
+      wrappedCells.forEach((lines, index) => {
+        const column = columns[index]
+        doc.line(x, y, x, y + rowHeight)
+
+        if (column.align === 'right') {
+          lines.forEach((line, lineIndex) => {
+            doc.text(line, x + column.width - 6, y + 14 + lineIndex * 11, { align: 'right' })
+          })
+        } else {
+          doc.text(lines, x + 6, y + 14)
+        }
+
+        x += column.width
+      })
+
+      doc.line(x, y, x, y + rowHeight)
+      y += rowHeight
     })
 
     const fileName = `${formatFilePart(selectedClient)}-mini-statement.pdf`
@@ -650,8 +792,8 @@ function Ledger({ onLogout }) {
             </div>
 
             <p className="history-meta">
-              Total Transactions: <strong>{filteredHistoryRows.length}</strong> | Credit: <strong>{historyTotals.credit}</strong> | Debit:{' '}
-              <strong>{historyTotals.debit}</strong> | Balance: <strong>{historyTotals.balance}</strong>
+              Total Transactions: <strong>{filteredHistoryRows.length}</strong> | Credit: <strong>{formatCurrency(historyTotals.credit)}</strong> | Debit:{' '}
+              <strong>{formatCurrency(historyTotals.debit)}</strong> | Balance: <strong>{formatCurrency(historyTotals.balance)}</strong>
             </p>
 
             <div className="history-actions">
@@ -659,10 +801,10 @@ function Ledger({ onLogout }) {
                 Add Transaction
               </button>
               <button type="button" className="table-action-btn" onClick={handleDownloadHistoryPdf} disabled={filteredHistoryRows.length === 0}>
-                Download PDF
+                PDF
               </button>
               <button type="button" className="ghost table-action-btn" onClick={handleDownloadHistoryExcel} disabled={filteredHistoryRows.length === 0}>
-                Download Excel
+                Excel
               </button>
             </div>
 
@@ -736,9 +878,9 @@ function Ledger({ onLogout }) {
                     <th>Sl No</th>
                     <th>Work</th>
                     <th>Date</th>
-                    <th>Credit</th>
-                    <th>Debit</th>
-                    <th>Balance</th>
+                    <th>Credit (Rs)</th>
+                    <th>Debit (Rs)</th>
+                    <th>Balance (Rs)</th>
                     <th>Remarks</th>
                     <th>Attachment</th>
                   </tr>
@@ -749,9 +891,9 @@ function Ledger({ onLogout }) {
                       <td data-label="Sl No">{row.slNo}</td>
                       <td data-label="Work">{row.work}</td>
                       <td data-label="Date">{formatDateTime(row.date)}</td>
-                      <td data-label="Credit">{row.credit}</td>
-                      <td data-label="Debit">{row.debit}</td>
-                      <td data-label="Balance">{row.balance}</td>
+                      <td data-label="Credit (Rs)">{formatAmount(row.credit)}</td>
+                      <td data-label="Debit (Rs)">{formatAmount(row.debit)}</td>
+                      <td data-label="Balance (Rs)">{formatAmount(row.balance)}</td>
                       <td data-label="Remarks">{row.remarks || '-'}</td>
                       <td data-label="Attachment">
                         {row.attachments.length > 0 ? (
@@ -859,7 +1001,7 @@ function Ledger({ onLogout }) {
                     <th>Name</th>
                     <th>Last Work</th>
                     <th>Last Date</th>
-                    <th>Balance</th>
+                    <th>Balance (Rs)</th>
                     <th>Transactions</th>
                     <th>Action</th>
                   </tr>
@@ -871,7 +1013,7 @@ function Ledger({ onLogout }) {
                       <td data-label="Name">{row.name}</td>
                       <td data-label="Last Work">{row.work}</td>
                       <td data-label="Last Date">{formatDateTime(row.date)}</td>
-                      <td data-label="Balance">{row.amount}</td>
+                      <td data-label="Balance (Rs)">{formatAmount(row.amount)}</td>
                       <td data-label="Transactions">{row.txCount}</td>
                       <td data-label="Action" className="actions-cell">
                         <div className="actions-wrap">
@@ -902,7 +1044,7 @@ function Ledger({ onLogout }) {
                 <tfoot>
                   <tr>
                     <th colSpan="4">Total</th>
-                    <th>{searchText ? filteredTotals.amount : totals.amount}</th>
+                    <th>{formatAmount(searchText ? filteredTotals.amount : totals.amount)}</th>
                     <th />
                     <th />
                   </tr>
