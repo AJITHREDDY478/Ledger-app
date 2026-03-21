@@ -447,10 +447,10 @@ function Ledger({ onLogout }) {
     ])
 
     const worksheet = XLSX.utils.aoa_to_sheet([
-      [`${selectedClient} - Mini Statement`],
+      [selectedClient],
       [`Generated`, new Date().toLocaleString()],
       [
-        'Total Transactions',
+        'Total Txn',
         filteredHistoryRows.length,
         'Credit (Rs)',
         formatPdfCurrency(historyTotals.credit),
@@ -512,7 +512,7 @@ function Ledger({ onLogout }) {
     function drawHeader() {
       doc.setFontSize(16)
       doc.setFont('helvetica', 'bold')
-      doc.text(`${selectedClient} - Mini Statement`, left, y)
+      doc.text(selectedClient, left, y)
       y += 20
 
       doc.setFontSize(10)
@@ -699,7 +699,7 @@ function Ledger({ onLogout }) {
               <button type="button" className="ghost back-btn" onClick={() => { resetForm(); setView(addReturnView) }}>
                 ← Back
               </button>
-              <h2 className="page-title">{isNameLocked ? `Add Transaction for ${form.name}` : 'Add New Ledger'}</h2>
+              <h2 className="page-title">{isNameLocked ? form.name : 'Add New Ledger'}</h2>
             </div>
 
             <form className="entry-form" onSubmit={handleAddEntry}>
@@ -788,17 +788,17 @@ function Ledger({ onLogout }) {
               >
                 ← Back
               </button>
-              <h2 className="page-title">{selectedClient} Mini Statement</h2>
+              <h2 className="page-title">{selectedClient}</h2>
             </div>
 
             <p className="history-meta">
-              Total Transactions: <strong>{filteredHistoryRows.length}</strong> | Credit: <strong>{formatCurrency(historyTotals.credit)}</strong> | Debit:{' '}
+              Total Txn: <strong>{filteredHistoryRows.length}</strong> | Credit: <strong>{formatCurrency(historyTotals.credit)}</strong> | Debit:{' '}
               <strong>{formatCurrency(historyTotals.debit)}</strong> | Balance: <strong>{formatCurrency(historyTotals.balance)}</strong>
             </p>
 
             <div className="history-actions">
               <button type="button" className="table-action-btn" onClick={() => handleAddTransactionForClient(selectedClient)}>
-                Add Transaction
+                Add Txn
               </button>
               <button type="button" className="table-action-btn" onClick={handleDownloadHistoryPdf} disabled={filteredHistoryRows.length === 0}>
                 PDF
