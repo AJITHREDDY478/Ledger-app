@@ -684,21 +684,20 @@ function Ledger({ onLogout }) {
   return (
     <main className="app-shell">
       <section className="card">
-        <header className="app-header">
-          <img src="/logo.svg" alt="Ledger logo" className="app-logo" />
-          <div className="app-header-text">
-            <h1>{APP_CONFIG.appName}</h1>
-            <p className="app-tagline">{APP_CONFIG.tagline}</p>
-          </div>
-          <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
-        </header>
+        {view !== 'add' && (
+          <header className="app-header">
+            <img src="/logo.svg" alt="Ledger logo" className="app-logo" />
+            <div className="app-header-text">
+              <h1>{APP_CONFIG.appName}</h1>
+              <p className="app-tagline">{APP_CONFIG.tagline}</p>
+            </div>
+            <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
+          </header>
+        )}
 
         {view === 'add' ? (
           <>
             <div className="page-title-bar">
-              <button type="button" className="ghost back-btn" onClick={() => { resetForm(); setView(addReturnView) }}>
-                ← Back
-              </button>
               <h2 className="page-title">{isNameLocked ? form.name : 'Add New Ledger'}</h2>
             </div>
 
@@ -767,7 +766,19 @@ function Ledger({ onLogout }) {
                   </>
                 )}
               </label>
-              <button type="submit" style={{ gridColumn: 'span 2' }}>Save Transaction</button>
+              <div className="form-actions" style={{ gridColumn: 'span 2' }}>
+                <button
+                  type="button"
+                  className="ghost back-btn"
+                  onClick={() => {
+                    resetForm()
+                    setView(addReturnView)
+                  }}
+                >
+                  Back
+                </button>
+                <button type="submit">Save Transaction</button>
+              </div>
             </form>
           </>
         ) : view === 'history' ? (

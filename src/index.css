@@ -135,6 +135,12 @@ h1 {
   color: var(--text);
 }
 
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .search-input {
   width: 100%;
   margin-bottom: 14px;
@@ -558,6 +564,10 @@ tfoot th {
 
   .entry-form button {
     width: 100%;
+  }
+
+  .form-actions button {
+    width: auto;
   }
 
   .table-wrap {
