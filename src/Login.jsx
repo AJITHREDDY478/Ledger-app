@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { APP_CONFIG } from './config'
 
-// Single set of credentials stored in sessionStorage under a hashed key.
-// Change these values to whatever you want for your login.
 const VALID_USERNAME = 'admin'
 const VALID_PASSWORD = 'ledger123'
+const REMEMBER_ME_KEY = 'ledger-remember-me-v1'
 
 export const SESSION_KEY = 'ledger-session'
 
@@ -16,6 +16,23 @@ export function Login({ onLogin }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [rememberMe, setRememberMe] = useState(false)
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(REMEMBER_ME_KEY)
+      if (!saved) return
+
+      const parsed = JSON.parse(saved)
+      if (parsed?.username && parsed?.password) {
+        setUsername(parsed.username)
+        setPassword(parsed.password)
+        setRememberMe(true)
+      }
+    } catch {
+      localStorage.removeItem(REMEMBER_ME_KEY)
+    }
+  }, [])
 
   function handleSubmit(e) {
     e.preventDefault()
@@ -23,6 +40,15 @@ export function Login({ onLogin }) {
       username.trim() === VALID_USERNAME &&
       password === VALID_PASSWORD
     ) {
+      if (rememberMe) {
+        localStorage.setItem(
+          REMEMBER_ME_KEY,
+          JSON.stringify({ username: username.trim(), password }),
+        )
+      } else {
+        localStorage.removeItem(REMEMBER_ME_KEY)
+      }
+
       sessionStorage.setItem(SESSION_KEY, 'true')
       onLogin()
     } else {
@@ -35,8 +61,8 @@ export function Login({ onLogin }) {
       <div className="login-card">
         <div className="login-brand">
           <img src="/logo.svg" alt="Ledger logo" className="login-logo" />
-          <h1>Ledger</h1>
-          <p>Track Credits &amp; Debits</p>
+          <h1>{APP_CONFIG.appName}</h1>
+          <p>{APP_CONFIG.tagline}</p>
         </div>
 
         <form className="login-form" onSubmit={handleSubmit} noValidate>
@@ -72,6 +98,15 @@ export function Login({ onLogin }) {
                 {showPassword ? '🙈' : '👁️'}
               </button>
             </div>
+          </label>
+
+          <label className="remember-field">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+            />
+            Remember username and password
           </label>
 
           {error && <p className="login-error">{error}</p>}

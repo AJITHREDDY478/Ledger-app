@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { jsPDF } from 'jspdf'
+import * as XLSX from 'xlsx'
 import { Login, isLoggedIn, SESSION_KEY } from './Login'
+import { APP_CONFIG } from './config'
+import { buildHistoryRows } from './ledgerUtils'
 
 const STORAGE_KEY = 'ledger-entries-v3'
 const MONTH_OPTIONS = [
@@ -18,6 +22,37 @@ const MONTH_OPTIONS = [
 ]
 
 const defaultEntries = []
+
+function getTodayInputDate() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function toIsoDateOrNow(value) {
+  if (!value) return new Date().toISOString()
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString()
+  return parsed.toISOString()
+}
+
+function downloadBlob(content, fileName, mimeType) {
+  const blob = new Blob([content], { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = fileName
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+  URL.revokeObjectURL(url)
+}
+
+function formatFilePart(value) {
+  return value.trim().replace(/\s+/g, '-').toLowerCase() || 'statement'
+}
 
 function toDateKey(value) {
   if (!value) return ''
@@ -119,11 +154,10 @@ function Ledger({ onLogout }) {
       return defaultEntries
     }
   })
-
   const [form, setForm] = useState({
     name: '',
     work: '',
-    date: '',
+    date: getTodayInputDate(),
     credit: '',
     debit: '',
     remarks: '',
@@ -133,8 +167,9 @@ function Ledger({ onLogout }) {
   const [rowsPerPage, setRowsPerPage] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [view, setView] = useState('list')
+  const [addReturnView, setAddReturnView] = useState('list')
   const [selectedClient, setSelectedClient] = useState('')
-  const [editingId, setEditingId] = useState(null)
+  const [isNameLocked, setIsNameLocked] = useState(false)
   const [historySearchText, setHistorySearchText] = useState('')
   const [listDateFrom, setListDateFrom] = useState('')
   const [listDateTo, setListDateTo] = useState('')
@@ -150,21 +185,27 @@ function Ledger({ onLogout }) {
   }, [entries])
 
   const rowsWithBalance = useMemo(() => {
-    let runningBalance = 0
+    const userBalances = new Map()
+
     return entries.map((entry, index) => {
       const credit = Number(entry.credit) || 0
       const debit = Number(entry.debit) || 0
       const attachments = normalizeAttachments(entry)
-      runningBalance += credit - debit
+      const safeDate = toIsoDateOrNow(entry.date)
+      const userKey = entry.name.trim().toLowerCase()
+      const previousBalance = userBalances.get(userKey) || 0
+      const amount = previousBalance + credit - debit
+      userBalances.set(userKey, amount)
+
       return {
         ...entry,
         slNo: index + 1,
-        date: entry.date || '',
+        date: safeDate,
         credit,
         debit,
+        amount,
         attachments,
         attachmentNames: attachments.map((item) => item.name).join(' '),
-        balance: runningBalance,
       }
     })
   }, [entries])
@@ -172,34 +213,56 @@ function Ledger({ onLogout }) {
   const totals = useMemo(() => {
     return rowsWithBalance.reduce(
       (acc, row) => {
-        acc.credit += row.credit
-        acc.debit += row.debit
-        acc.balance = row.balance
+        acc.amount += row.credit - row.debit
         return acc
       },
-      { credit: 0, debit: 0, balance: 0 },
+      { amount: 0 },
     )
+  }, [rowsWithBalance])
+
+  const userSummaryRows = useMemo(() => {
+    const userMap = new Map()
+
+    rowsWithBalance.forEach((row) => {
+      const userKey = row.name.trim().toLowerCase()
+      const existing = userMap.get(userKey)
+
+      userMap.set(userKey, {
+        ...row,
+        id: `user-${userKey}`,
+        userKey,
+        txCount: (existing?.txCount || 0) + 1,
+      })
+    })
+
+    return Array.from(userMap.values())
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((row, index) => ({ ...row, slNo: index + 1 }))
   }, [rowsWithBalance])
 
   const yearOptions = useMemo(() => {
     const years = new Set()
-    years.add(String(new Date().getFullYear()))
+    const currentYear = new Date().getFullYear()
+
+    for (let year = currentYear; year <= currentYear + 4; year += 1) {
+      years.add(String(year))
+    }
 
     entries.forEach((entry) => {
       const dateKey = toDateKey(entry.date)
       if (dateKey) years.add(dateKey.slice(0, 4))
     })
 
-    return Array.from(years).sort((a, b) => Number(b) - Number(a))
+    return Array.from(years).sort((a, b) => Number(a) - Number(b))
   }, [entries])
 
   const dateFilteredRows = useMemo(() => {
-    return rowsWithBalance.filter(
+    return userSummaryRows.filter(
       (row) =>
         isWithinDateRange(row.date, listDateFrom, listDateTo) &&
         isMatchingMonthYear(row.date, listMonth, listYear),
     )
-  }, [rowsWithBalance, listDateFrom, listDateTo, listMonth, listYear])
+  }, [userSummaryRows, listDateFrom, listDateTo, listMonth, listYear])
 
   const filteredRows = useMemo(() => {
     const keyword = searchText.trim().toLowerCase()
@@ -210,9 +273,8 @@ function Ledger({ onLogout }) {
         row.slNo,
         row.name,
         row.work,
-        row.credit,
-        row.debit,
-        row.balance,
+        row.amount,
+        row.txCount,
         row.remarks,
         row.attachmentNames,
       ]
@@ -223,29 +285,16 @@ function Ledger({ onLogout }) {
   }, [dateFilteredRows, searchText])
 
   const historyRows = useMemo(() => {
-    const target = selectedClient.trim().toLowerCase()
-    if (!target) return []
-
-    const matchedEntries = entries.filter((entry) => entry.name.trim().toLowerCase() === target)
-    const dateFilteredEntries = matchedEntries.filter((entry) =>
-      isWithinDateRange(entry.date, historyDateFrom, historyDateTo) &&
-      isMatchingMonthYear(entry.date, historyMonth, historyYear),
-    )
-
-    let runningBalance = 0
-    return dateFilteredEntries
-      .map((entry, index) => {
-        const credit = Number(entry.credit) || 0
-        const debit = Number(entry.debit) || 0
-        runningBalance += credit - debit
-        return {
-          ...entry,
-          slNo: index + 1,
-          credit,
-          debit,
-          balance: runningBalance,
-        }
-      })
+    return buildHistoryRows({
+      entries,
+      selectedClient,
+      historyDateFrom,
+      historyDateTo,
+      historyMonth,
+      historyYear,
+      isWithinDateRange,
+      isMatchingMonthYear,
+    })
   }, [entries, selectedClient, historyDateFrom, historyDateTo, historyMonth, historyYear])
 
   const filteredHistoryRows = useMemo(() => {
@@ -274,7 +323,7 @@ function Ledger({ onLogout }) {
       (acc, row) => {
         acc.credit += row.credit
         acc.debit += row.debit
-        acc.balance = row.balance
+        acc.balance = acc.credit - acc.debit
         return acc
       },
       { credit: 0, debit: 0, balance: 0 },
@@ -284,12 +333,10 @@ function Ledger({ onLogout }) {
   const filteredTotals = useMemo(() => {
     return filteredRows.reduce(
       (acc, row) => {
-        acc.credit += row.credit
-        acc.debit += row.debit
-        acc.balance = row.balance
+        acc.amount += row.amount
         return acc
       },
-      { credit: 0, debit: 0, balance: 0 },
+      { amount: 0 },
     )
   }, [filteredRows])
 
@@ -327,21 +374,22 @@ function Ledger({ onLogout }) {
     }
   }
 
-  function resetForm(keepName = '') {
+  function resetForm(keepName = '', lockName = false) {
     setForm({
       name: keepName,
       work: '',
-      date: '',
+      date: getTodayInputDate(),
       credit: '',
       debit: '',
       remarks: '',
       attachments: [],
     })
+    setIsNameLocked(lockName)
   }
 
-  function openAddView(prefillName = '') {
-    setEditingId(null)
-    resetForm(prefillName)
+  function openAddView(prefillName = '', lockName = false, returnView = 'list') {
+    resetForm(prefillName, lockName)
+    setAddReturnView(returnView)
     setView('add')
   }
 
@@ -355,19 +403,86 @@ function Ledger({ onLogout }) {
     setView('history')
   }
 
-  function handleEditEntry(row) {
-    const dateInput = row.date ? new Date(row.date).toISOString().slice(0, 10) : ''
-    setForm({
-      name: row.name || '',
-      work: row.work || '',
-      date: dateInput,
-      credit: '',
-      debit: '',
-      remarks: row.remarks || '',
-      attachments: row.attachments || [],
+  function handleAddTransactionForClient(name) {
+    openAddView(name, true, 'history')
+  }
+
+  function handleDownloadHistoryExcel() {
+    if (!selectedClient || filteredHistoryRows.length === 0) return
+
+    const data = filteredHistoryRows.map((row) => ({
+      'Sl No': row.slNo,
+      Work: row.work,
+      Date: formatDateTime(row.date),
+      Credit: row.credit,
+      Debit: row.debit,
+      Balance: row.balance,
+      Remarks: row.remarks || '-',
+      Attachment: row.attachmentNames || '-',
+    }))
+
+    const worksheet = XLSX.utils.json_to_sheet(data)
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Mini Statement')
+
+    const fileBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' })
+    const fileName = `${formatFilePart(selectedClient)}-mini-statement.xlsx`
+    downloadBlob(
+      fileBuffer,
+      fileName,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+  }
+
+  function handleDownloadHistoryPdf() {
+    if (!selectedClient || filteredHistoryRows.length === 0) return
+
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' })
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const left = 40
+    let y = 46
+
+    doc.setFontSize(14)
+    doc.text(`${selectedClient} - Mini Statement`, left, y)
+    y += 18
+
+    doc.setFontSize(10)
+    doc.text(`Generated: ${new Date().toLocaleString()}`, left, y)
+    y += 14
+    doc.text(
+      `Transactions: ${filteredHistoryRows.length}  Credit: ${historyTotals.credit}  Debit: ${historyTotals.debit}  Balance: ${historyTotals.balance}`,
+      left,
+      y,
+    )
+    y += 16
+
+    doc.setFontSize(9)
+    doc.text('Sl  Date             Work                 Credit   Debit   Balance', left, y)
+    y += 10
+    doc.line(left, y, 555, y)
+    y += 12
+
+    filteredHistoryRows.forEach((row) => {
+      if (y > pageHeight - 40) {
+        doc.addPage()
+        y = 40
+      }
+
+      const text = [
+        String(row.slNo).padEnd(3),
+        formatDateTime(row.date).slice(0, 16).padEnd(16),
+        (row.work || '-').slice(0, 20).padEnd(20),
+        String(row.credit).padStart(6),
+        String(row.debit).padStart(6),
+        String(row.balance).padStart(8),
+      ].join('  ')
+
+      doc.text(text, left, y)
+      y += 12
     })
-    setEditingId(row.id)
-    setView('add')
+
+    const fileName = `${formatFilePart(selectedClient)}-mini-statement.pdf`
+    doc.save(fileName)
   }
 
   function handleAddEntry(event) {
@@ -376,17 +491,34 @@ function Ledger({ onLogout }) {
     const credit = Number(form.credit) || 0
     const debit = Number(form.debit) || 0
 
-    if (!form.name.trim() || !form.work.trim()) {
+    if (!form.name.trim() || (!isNameLocked && !form.work.trim())) {
       return
     }
 
-    const dateValue = form.date
-      ? new Date(`${form.date}T00:00:00`).toISOString()
-      : new Date().toISOString()
+    const now = new Date()
+    let dateValue = now.toISOString()
+
+    if (form.date) {
+      const [year, month, day] = form.date.split('-').map(Number)
+      if (year && month && day) {
+        const selectedWithCurrentTime = new Date(
+          year,
+          month - 1,
+          day,
+          now.getHours(),
+          now.getMinutes(),
+          now.getSeconds(),
+          now.getMilliseconds(),
+        )
+        dateValue = selectedWithCurrentTime.toISOString()
+      }
+    }
 
     const nextEntry = {
-      id: editingId || Date.now(),
-      name: form.name.trim(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name:
+        entries.find((entry) => entry.name.trim().toLowerCase() === form.name.trim().toLowerCase())?.name ||
+        form.name.trim(),
       work: form.work.trim(),
       date: dateValue,
       credit,
@@ -398,28 +530,13 @@ function Ledger({ onLogout }) {
       fileName: form.attachments[0]?.name || '',
     }
 
-    if (editingId) {
-      const original = entries.find((entry) => entry.id === editingId)
-      const originalCredit = Number(original?.credit) || 0
-      const originalDebit = Number(original?.debit) || 0
-      const amountChanged = originalCredit !== credit || originalDebit !== debit
-
-      if (amountChanged) {
-        // Keep old transaction immutable and record new amount as a new transaction entry.
-        setEntries((prev) => [...prev, { ...nextEntry, id: Date.now() }])
-      } else {
-        setEntries((prev) => prev.map((entry) => (entry.id === editingId ? nextEntry : entry)))
-      }
-    } else {
-      setEntries((prev) => [...prev, nextEntry])
-      if (!searchText.trim()) {
-        setCurrentPage(Math.ceil((entries.length + 1) / rowsPerPage))
-      }
+    setEntries((prev) => [...prev, nextEntry])
+    if (!searchText.trim()) {
+      setCurrentPage(Math.ceil((entries.length + 1) / rowsPerPage))
     }
 
-    setEditingId(null)
     resetForm()
-    setView('list')
+    setView(addReturnView)
   }
 
   return (
@@ -428,8 +545,8 @@ function Ledger({ onLogout }) {
         <header className="app-header">
           <img src="/logo.svg" alt="Ledger logo" className="app-logo" />
           <div className="app-header-text">
-            <h1>Ledger</h1>
-            <p className="app-tagline">Track Credits &amp; Debits</p>
+            <h1>{APP_CONFIG.appName}</h1>
+            <p className="app-tagline">{APP_CONFIG.tagline}</p>
           </div>
           <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
         </header>
@@ -437,10 +554,10 @@ function Ledger({ onLogout }) {
         {view === 'add' ? (
           <>
             <div className="page-title-bar">
-              <button type="button" className="ghost back-btn" onClick={() => { setEditingId(null); resetForm(); setView('list') }}>
+              <button type="button" className="ghost back-btn" onClick={() => { resetForm(); setView(addReturnView) }}>
                 ← Back
               </button>
-              <h2 className="page-title">{editingId ? 'Edit Ledger' : 'Add New Ledger'}</h2>
+              <h2 className="page-title">{isNameLocked ? `Add Transaction for ${form.name}` : 'Add New Ledger'}</h2>
             </div>
 
             <form className="entry-form" onSubmit={handleAddEntry}>
@@ -449,6 +566,7 @@ function Ledger({ onLogout }) {
                 placeholder="Name"
                 value={form.name}
                 onChange={handleChange}
+                readOnly={isNameLocked}
                 required
               />
               <input
@@ -456,7 +574,7 @@ function Ledger({ onLogout }) {
                 placeholder="Work"
                 value={form.work}
                 onChange={handleChange}
-                required
+                required={!isNameLocked}
               />
               <input
                 name="credit"
@@ -485,14 +603,14 @@ function Ledger({ onLogout }) {
               </label>
               <textarea
                 name="remarks"
-                placeholder="Remarks (optional)"
+                placeholder="Remarks"
                 value={form.remarks}
                 onChange={handleChange}
                 rows={2}
                 style={{ gridColumn: 'span 2', resize: 'vertical' }}
               />
               <label className="date-field" style={{ gridColumn: 'span 2' }}>
-                Attachment (optional)
+                Attachment
                 <input
                   name="file"
                   type="file"
@@ -507,7 +625,7 @@ function Ledger({ onLogout }) {
                   </>
                 )}
               </label>
-              <button type="submit" style={{ gridColumn: 'span 2' }}>{editingId ? 'Update Ledger' : 'Save Ledger'}</button>
+              <button type="submit" style={{ gridColumn: 'span 2' }}>Save Transaction</button>
             </form>
           </>
         ) : view === 'history' ? (
@@ -528,13 +646,25 @@ function Ledger({ onLogout }) {
               >
                 ← Back
               </button>
-              <h2 className="page-title">{selectedClient} History</h2>
+              <h2 className="page-title">{selectedClient} Mini Statement</h2>
             </div>
 
             <p className="history-meta">
               Total Transactions: <strong>{filteredHistoryRows.length}</strong> | Credit: <strong>{historyTotals.credit}</strong> | Debit:{' '}
               <strong>{historyTotals.debit}</strong> | Balance: <strong>{historyTotals.balance}</strong>
             </p>
+
+            <div className="history-actions">
+              <button type="button" className="table-action-btn" onClick={() => handleAddTransactionForClient(selectedClient)}>
+                Add Transaction
+              </button>
+              <button type="button" className="table-action-btn" onClick={handleDownloadHistoryPdf} disabled={filteredHistoryRows.length === 0}>
+                Download PDF
+              </button>
+              <button type="button" className="ghost table-action-btn" onClick={handleDownloadHistoryExcel} disabled={filteredHistoryRows.length === 0}>
+                Download Excel
+              </button>
+            </div>
 
             <div className="history-toolbar">
               <input
@@ -727,9 +857,10 @@ function Ledger({ onLogout }) {
                   <tr>
                     <th>Sl No</th>
                     <th>Name</th>
-                    <th>Work</th>
-                    <th>Date</th>
-                    <th>Amount</th>
+                    <th>Last Work</th>
+                    <th>Last Date</th>
+                    <th>Balance</th>
+                    <th>Transactions</th>
                     <th>Action</th>
                   </tr>
                 </thead>
@@ -738,9 +869,10 @@ function Ledger({ onLogout }) {
                     <tr key={row.id}>
                       <td data-label="Sl No">{row.slNo}</td>
                       <td data-label="Name">{row.name}</td>
-                      <td data-label="Work">{row.work}</td>
-                      <td data-label="Date">{formatDateTime(row.date)}</td>
-                      <td data-label="Amount">{row.balance}</td>
+                      <td data-label="Last Work">{row.work}</td>
+                      <td data-label="Last Date">{formatDateTime(row.date)}</td>
+                      <td data-label="Balance">{row.amount}</td>
+                      <td data-label="Transactions">{row.txCount}</td>
                       <td data-label="Action" className="actions-cell">
                         <div className="actions-wrap">
                           <button
@@ -748,14 +880,14 @@ function Ledger({ onLogout }) {
                             className="ghost table-action-btn"
                             onClick={() => handleOpenHistory(row.name)}
                           >
-                            History
+                            Statement
                           </button>
                           <button
                             type="button"
                             className="table-action-btn"
-                            onClick={() => handleEditEntry(row)}
+                            onClick={() => handleAddTransactionForClient(row.name)}
                           >
-                            Edit
+                            Add Txn
                           </button>
                         </div>
                       </td>
@@ -763,14 +895,15 @@ function Ledger({ onLogout }) {
                   ))}
                   {paginatedRows.length === 0 && (
                     <tr>
-                      <td colSpan="6">No ledgers</td>
+                      <td colSpan="7">No ledgers</td>
                     </tr>
                   )}
                 </tbody>
                 <tfoot>
                   <tr>
                     <th colSpan="4">Total</th>
-                    <th>{searchText ? filteredTotals.balance : totals.balance}</th>
+                    <th>{searchText ? filteredTotals.amount : totals.amount}</th>
+                    <th />
                     <th />
                   </tr>
                 </tfoot>
@@ -812,8 +945,8 @@ function Ledger({ onLogout }) {
         )}
 
         <footer className="app-footer">
-          <p className="app-footer-primary">&copy; {new Date().getFullYear()} Ledger App. All rights reserved.</p>
-          <p className="app-footer-secondary">Developed by <strong>Ajith Reddy</strong></p>
+          <p className="app-footer-primary">&copy; {new Date().getFullYear()} {APP_CONFIG.appName}. All rights reserved.</p>
+          <p className="app-footer-secondary">Developed by <strong>{APP_CONFIG.developerName}</strong></p>
         </footer>
       </section>
     </main>

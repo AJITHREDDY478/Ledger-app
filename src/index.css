@@ -176,6 +176,16 @@ h1 {
   width: 100%;
 }
 
+.filter-field select {
+  width: 100%;
+  font: inherit;
+  border-radius: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--text);
+}
+
 .page-title-bar {
   display: flex;
   align-items: center;
@@ -192,6 +202,13 @@ h1 {
   margin: 0 0 14px;
   font-size: 14px;
   color: var(--muted);
+}
+
+.history-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
 }
 
 .history-toolbar {
@@ -364,6 +381,19 @@ button:disabled {
 .toggle-pw:hover {
   background: transparent;
   color: var(--text);
+}
+
+.remember-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.remember-field input {
+  width: auto;
+  margin: 0;
 }
 
 .login-error {
