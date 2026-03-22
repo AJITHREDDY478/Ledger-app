@@ -22,11 +22,8 @@ function normalizeAttachments(entry) {
 export function buildHistoryRows({
   entries,
   selectedClient,
-  historyDateFrom,
-  historyDateTo,
   historyMonth,
   historyYear,
-  isWithinDateRange,
   isMatchingMonthYear,
 }) {
   const target = selectedClient.trim().toLowerCase()
@@ -34,7 +31,6 @@ export function buildHistoryRows({
 
   const matchedEntries = entries.filter((entry) => entry.name.trim().toLowerCase() === target)
   const dateFilteredEntries = matchedEntries.filter((entry) =>
-    isWithinDateRange(entry.date, historyDateFrom, historyDateTo) &&
     isMatchingMonthYear(entry.date, historyMonth, historyYear),
   )
 

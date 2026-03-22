@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { jsPDF } from 'jspdf'
 import * as XLSX from 'xlsx'
 import { Login, isLoggedIn, SESSION_KEY } from './Login'
@@ -88,15 +88,6 @@ function toDateKey(value) {
   const month = String(parsed.getMonth() + 1).padStart(2, '0')
   const day = String(parsed.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
-}
-
-function isWithinDateRange(value, from, to) {
-  if (!from && !to) return true
-  const dateKey = toDateKey(value)
-  if (!dateKey) return false
-  if (from && dateKey < from) return false
-  if (to && dateKey > to) return false
-  return true
 }
 
 function isMatchingMonthYear(value, month, year) {
@@ -196,18 +187,27 @@ function Ledger({ onLogout }) {
   const [selectedClient, setSelectedClient] = useState('')
   const [isNameLocked, setIsNameLocked] = useState(false)
   const [historySearchText, setHistorySearchText] = useState('')
-  const [listDateFrom, setListDateFrom] = useState('')
-  const [listDateTo, setListDateTo] = useState('')
   const [listMonth, setListMonth] = useState('')
   const [listYear, setListYear] = useState('')
-  const [historyDateFrom, setHistoryDateFrom] = useState('')
-  const [historyDateTo, setHistoryDateTo] = useState('')
   const [historyMonth, setHistoryMonth] = useState('')
   const [historyYear, setHistoryYear] = useState('')
+  const [downloadOpen, setDownloadOpen] = useState(false)
+  const downloadRef = useRef(null)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(entries))
   }, [entries])
+
+  useEffect(() => {
+    if (!downloadOpen) return
+    function handleOutsideClick(event) {
+      if (downloadRef.current && !downloadRef.current.contains(event.target)) {
+        setDownloadOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleOutsideClick)
+    return () => document.removeEventListener('mousedown', handleOutsideClick)
+  }, [downloadOpen])
 
   const rowsWithBalance = useMemo(() => {
     const userBalances = new Map()
@@ -283,11 +283,9 @@ function Ledger({ onLogout }) {
 
   const dateFilteredRows = useMemo(() => {
     return userSummaryRows.filter(
-      (row) =>
-        isWithinDateRange(row.date, listDateFrom, listDateTo) &&
-        isMatchingMonthYear(row.date, listMonth, listYear),
+      (row) => isMatchingMonthYear(row.date, listMonth, listYear),
     )
-  }, [userSummaryRows, listDateFrom, listDateTo, listMonth, listYear])
+  }, [userSummaryRows, listMonth, listYear])
 
   const filteredRows = useMemo(() => {
     const keyword = searchText.trim().toLowerCase()
@@ -313,14 +311,11 @@ function Ledger({ onLogout }) {
     return buildHistoryRows({
       entries,
       selectedClient,
-      historyDateFrom,
-      historyDateTo,
       historyMonth,
       historyYear,
-      isWithinDateRange,
       isMatchingMonthYear,
     })
-  }, [entries, selectedClient, historyDateFrom, historyDateTo, historyMonth, historyYear])
+  }, [entries, selectedClient, historyMonth, historyYear])
 
   const filteredHistoryRows = useMemo(() => {
     const keyword = historySearchText.trim().toLowerCase()
@@ -371,7 +366,7 @@ function Ledger({ onLogout }) {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [searchText, rowsPerPage, listDateFrom, listDateTo, listMonth, listYear])
+  }, [searchText, rowsPerPage, listMonth, listYear])
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -421,8 +416,6 @@ function Ledger({ onLogout }) {
   function handleOpenHistory(name) {
     setSelectedClient(name)
     setHistorySearchText('')
-    setHistoryDateFrom('')
-    setHistoryDateTo('')
     setHistoryMonth('')
     setHistoryYear('')
     setView('history')
@@ -684,7 +677,7 @@ function Ledger({ onLogout }) {
   return (
     <main className="app-shell">
       <section className="card">
-        {view !== 'add' && (
+        {view === 'list' && (
           <header className="app-header">
             <img src="/logo.svg" alt="Ledger logo" className="app-logo" />
             <div className="app-header-text">
@@ -783,71 +776,27 @@ function Ledger({ onLogout }) {
           </>
         ) : view === 'history' ? (
           <>
-            <div className="page-title-bar">
-              <button
-                type="button"
-                className="ghost back-btn"
-                onClick={() => {
-                  setSelectedClient('')
-                  setHistorySearchText('')
-                  setHistoryDateFrom('')
-                  setHistoryDateTo('')
-                  setHistoryMonth('')
-                  setHistoryYear('')
-                  setView('list')
-                }}
-              >
-                ← Back
-              </button>
+            <div className="page-title-bar history-title-bar">
               <h2 className="page-title">{selectedClient}</h2>
+              <span className="history-header-total">Total Txn: <strong>{filteredHistoryRows.length}</strong></span>
             </div>
 
-            <p className="history-meta">
-              Total Txn: <strong>{filteredHistoryRows.length}</strong> | Credit: <strong>{formatCurrency(historyTotals.credit)}</strong> | Debit:{' '}
-              <strong>{formatCurrency(historyTotals.debit)}</strong> | Balance: <strong>{formatCurrency(historyTotals.balance)}</strong>
-            </p>
-
-            <div className="history-actions">
-              <button type="button" className="table-action-btn" onClick={() => handleAddTransactionForClient(selectedClient)}>
-                Add Txn
-              </button>
-              <button type="button" className="table-action-btn" onClick={handleDownloadHistoryPdf} disabled={filteredHistoryRows.length === 0}>
-                PDF
-              </button>
-              <button type="button" className="ghost table-action-btn" onClick={handleDownloadHistoryExcel} disabled={filteredHistoryRows.length === 0}>
-                Excel
-              </button>
+            <div className="history-summary-cards">
+              <article className="summary-card">
+                <span className="summary-label">Credit</span>
+                <strong className="summary-value">{formatCurrency(historyTotals.credit)}</strong>
+              </article>
+              <article className="summary-card">
+                <span className="summary-label">Debit</span>
+                <strong className="summary-value">{formatCurrency(historyTotals.debit)}</strong>
+              </article>
+              <article className="summary-card summary-card-emphasis">
+                <span className="summary-label">Balance</span>
+                <strong className="summary-value">{formatCurrency(historyTotals.balance)}</strong>
+              </article>
             </div>
 
             <div className="history-toolbar">
-              <input
-                aria-label="Search history rows"
-                className="search-input"
-                type="search"
-                placeholder="Search history by work, amount, remarks..."
-                value={historySearchText}
-                onChange={(event) => setHistorySearchText(event.target.value)}
-              />
-              <div className="date-range-row">
-                <label className="filter-field" htmlFor="history-date-from">
-                  From
-                  <input
-                    id="history-date-from"
-                    type="date"
-                    value={historyDateFrom}
-                    onChange={(event) => setHistoryDateFrom(event.target.value)}
-                  />
-                </label>
-                <label className="filter-field" htmlFor="history-date-to">
-                  To
-                  <input
-                    id="history-date-to"
-                    type="date"
-                    value={historyDateTo}
-                    onChange={(event) => setHistoryDateTo(event.target.value)}
-                  />
-                </label>
-              </div>
               <div className="month-year-row">
                 <label className="filter-field" htmlFor="history-month">
                   Month
@@ -880,6 +829,62 @@ function Ledger({ onLogout }) {
                   </select>
                 </label>
               </div>
+              <input
+                aria-label="Search history rows"
+                className="search-input"
+                type="search"
+                placeholder="Search by work, amount, remarks..."
+                value={historySearchText}
+                onChange={(event) => setHistorySearchText(event.target.value)}
+              />
+            </div>
+
+            <div className="history-add-txn-row">
+              <button
+                type="button"
+                className="ghost back-btn"
+                onClick={() => {
+                  setSelectedClient('')
+                  setHistorySearchText('')
+                  setHistoryMonth('')
+                  setHistoryYear('')
+                  setView('list')
+                }}
+              >
+                ← Back
+              </button>
+              <div className="history-download-dropdown" ref={downloadRef}>
+                <button
+                  type="button"
+                  className="table-action-btn history-download-trigger"
+                  onClick={() => setDownloadOpen((prev) => !prev)}
+                >
+                  Download ▾
+                </button>
+                {downloadOpen && (
+                  <div className="history-download-menu">
+                    <button
+                      type="button"
+                      className="table-action-btn"
+                      disabled={filteredHistoryRows.length === 0}
+                      onClick={() => { handleDownloadHistoryPdf(); setDownloadOpen(false) }}
+                    >
+                      PDF
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost table-action-btn"
+                      disabled={filteredHistoryRows.length === 0}
+                      onClick={() => { handleDownloadHistoryExcel(); setDownloadOpen(false) }}
+                    >
+                      Excel
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button type="button" className="table-action-btn" onClick={() => handleAddTransactionForClient(selectedClient)}>
+                Add Txn
+              </button>
             </div>
 
             <div className="table-wrap">
@@ -942,34 +947,6 @@ function Ledger({ onLogout }) {
             </div>
 
             <div className="list-toolbar">
-              <input
-                aria-label="Search ledger rows"
-                className="search-input"
-                type="search"
-                placeholder="Search by name, work, amount..."
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-              />
-              <div className="date-range-row">
-                <label className="filter-field" htmlFor="list-date-from">
-                  From
-                  <input
-                    id="list-date-from"
-                    type="date"
-                    value={listDateFrom}
-                    onChange={(event) => setListDateFrom(event.target.value)}
-                  />
-                </label>
-                <label className="filter-field" htmlFor="list-date-to">
-                  To
-                  <input
-                    id="list-date-to"
-                    type="date"
-                    value={listDateTo}
-                    onChange={(event) => setListDateTo(event.target.value)}
-                  />
-                </label>
-              </div>
               <div className="month-year-row">
                 <label className="filter-field" htmlFor="list-month">
                   Month
@@ -1002,6 +979,14 @@ function Ledger({ onLogout }) {
                   </select>
                 </label>
               </div>
+              <input
+                aria-label="Search ledger rows"
+                className="search-input"
+                type="search"
+                placeholder="Search by name, work, amount..."
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+              />
             </div>
 
             <div className="table-wrap">
@@ -1013,7 +998,6 @@ function Ledger({ onLogout }) {
                     <th>Last Work</th>
                     <th>Last Date</th>
                     <th>Balance (Rs)</th>
-                    <th>Transactions</th>
                     <th>Action</th>
                   </tr>
                 </thead>
@@ -1025,7 +1009,6 @@ function Ledger({ onLogout }) {
                       <td data-label="Last Work">{row.work}</td>
                       <td data-label="Last Date">{formatDateTime(row.date)}</td>
                       <td data-label="Balance (Rs)">{formatAmount(row.amount)}</td>
-                      <td data-label="Transactions">{row.txCount}</td>
                       <td data-label="Action" className="actions-cell">
                         <div className="actions-wrap">
                           <button
@@ -1048,7 +1031,7 @@ function Ledger({ onLogout }) {
                   ))}
                   {paginatedRows.length === 0 && (
                     <tr>
-                      <td colSpan="7">No ledgers</td>
+                      <td colSpan="6">No ledgers</td>
                     </tr>
                   )}
                 </tbody>
@@ -1056,7 +1039,6 @@ function Ledger({ onLogout }) {
                   <tr>
                     <th colSpan="4">Total</th>
                     <th>{formatAmount(searchText ? filteredTotals.amount : totals.amount)}</th>
-                    <th />
                     <th />
                   </tr>
                 </tfoot>
