@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { jsPDF } from 'jspdf'
 import * as XLSX from 'xlsx'
 import { Login, isLoggedIn, SESSION_KEY } from './Login'
-import { APP_CONFIG } from './config'
+import { APP_CONFIG, supabase } from './config'
 import { buildHistoryRows } from './ledgerUtils'
 
 const STORAGE_KEY = 'ledger-entries-v3'
@@ -22,6 +22,10 @@ const MONTH_OPTIONS = [
 ]
 
 const defaultEntries = []
+const MAX_ATTACHMENTS = 8
+const MAX_IMAGE_DIMENSION = 1280
+const IMAGE_COMPRESSION_QUALITY = 0.72
+const MAX_INLINE_ATTACHMENT_BYTES = 900 * 1024
 
 const currencyFormatter = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -103,29 +107,87 @@ function isMatchingMonthYear(value, month, year) {
 function normalizeAttachments(entry) {
   if (Array.isArray(entry.attachments) && entry.attachments.length > 0) {
     return entry.attachments
-      .filter((item) => item && item.name && item.data)
-      .map((item) => ({ name: item.name, data: item.data }))
+      .filter((item) => item && item.name && (item.url || item.data))
+      .map((item) => ({ name: item.name, url: item.url || item.data }))
   }
-
-  if (entry.file && entry.fileName) {
-    return [{ name: entry.fileName, data: entry.file }]
-  }
-
   return []
 }
 
-function readFilesAsDataUrls(fileList) {
-  return Promise.all(
-    fileList.map(
-      (file) =>
-        new Promise((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = (e) => resolve({ name: file.name, data: e.target?.result || '' })
-          reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`))
-          reader.readAsDataURL(file)
-        }),
-    ),
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function dataUrlByteSize(dataUrl) {
+  const text = String(dataUrl || '')
+  const marker = ';base64,'
+  const markerIndex = text.indexOf(marker)
+  if (markerIndex === -1) return text.length
+  const base64 = text.slice(markerIndex + marker.length)
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0
+  return Math.floor((base64.length * 3) / 4) - padding
+}
+
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('Failed to load image'))
+    image.src = dataUrl
+  })
+}
+
+async function toOptimizedAttachmentData(file) {
+  const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_')
+  const originalDataUrl = await readFileAsDataUrl(file)
+
+  if (!file.type.startsWith('image/')) {
+    return { name: safeName, url: String(originalDataUrl || '') }
+  }
+
+  const image = await loadImageFromDataUrl(originalDataUrl)
+  const width = image.naturalWidth || image.width
+  const height = image.naturalHeight || image.height
+  if (!width || !height) {
+    return { name: safeName, url: String(originalDataUrl || '') }
+  }
+
+  const ratio = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(width, height))
+  const targetWidth = Math.max(1, Math.round(width * ratio))
+  const targetHeight = Math.max(1, Math.round(height * ratio))
+  const canvas = document.createElement('canvas')
+  canvas.width = targetWidth
+  canvas.height = targetHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    return { name: safeName, url: String(originalDataUrl || '') }
+  }
+  ctx.drawImage(image, 0, 0, targetWidth, targetHeight)
+
+  const optimizedDataUrl = canvas.toDataURL('image/jpeg', IMAGE_COMPRESSION_QUALITY)
+  const optimized =
+    dataUrlByteSize(optimizedDataUrl) < dataUrlByteSize(originalDataUrl)
+      ? optimizedDataUrl
+      : originalDataUrl
+  return { name: safeName, url: optimized }
+}
+
+async function convertFilesToInlineAttachments(fileList) {
+  const attachments = await Promise.all(
+    fileList.map(async (file) => toOptimizedAttachmentData(file)),
   )
+  return attachments
+    .filter((item) => item.url)
+    .map((item) => {
+      if (dataUrlByteSize(item.url) > MAX_INLINE_ATTACHMENT_BYTES) {
+        throw new Error(`"${item.name}" is too large. Please use a smaller image.`)
+      }
+      return item
+    })
 }
 
 function formatDateTime(value) {
@@ -160,16 +222,28 @@ function App() {
 }
 
 function Ledger({ onLogout }) {
-  const [entries, setEntries] = useState(() => {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (!saved) return defaultEntries
-    try {
-      const parsed = JSON.parse(saved)
-      return Array.isArray(parsed) ? parsed : defaultEntries
-    } catch {
-      return defaultEntries
+    function handleLedgerSelect(ledger) {
+      setSelectedLedger(ledger)
+      setView('history')
     }
-  })
+  const [entries, setEntries] = useState([])
+  const [ledgers, setLedgers] = useState([])
+  const [allLedgerEntries, setAllLedgerEntries] = useState([])
+  const [selectedLedger, setSelectedLedger] = useState(null)
+    // Fetch ledgers from Supabase on mount
+    useEffect(() => {
+      async function fetchLedgers() {
+        const { data, error } = await supabase
+          .from('ledgers')
+          .select('*')
+          .order('name', { ascending: true })
+        if (!error) setLedgers(data || [])
+      }
+      fetchLedgers()
+    }, [])
+  const [loading, setLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState('')
   const [form, setForm] = useState({
     name: '',
     work: '',
@@ -194,20 +268,79 @@ function Ledger({ onLogout }) {
   const [downloadOpen, setDownloadOpen] = useState(false)
   const downloadRef = useRef(null)
 
+
+
+  // Only fetch ledgers on mount
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries))
-  }, [entries])
+    async function fetchLedgers() {
+      setLoading(true)
+      setError('')
+      const { data, error } = await supabase
+        .from('ledgers')
+        .select('*')
+        .order('name', { ascending: true })
+      if (error) {
+        setError('Failed to load ledgers')
+        setLedgers([])
+      } else {
+        setLedgers(data || [])
+      }
+      setLoading(false)
+    }
+    fetchLedgers()
+  }, [])
+
+  // Fetch entries only when a ledger is selected (e.g., for history/details)
+  useEffect(() => {
+    if (!selectedLedger) {
+      setEntries([])
+      return
+    }
+    async function fetchEntriesForLedger() {
+      setLoading(true)
+      setError('')
+      const { data, error } = await supabase
+        .from('ledger_entries')
+        .select('*')
+        .eq('ledger_id', selectedLedger.id)
+        .order('date', { ascending: true })
+      if (error) {
+        setError('Failed to load entries')
+        setEntries([])
+      } else {
+        const safeLedgerName = selectedLedger.name || ''
+        const normalizedEntries = (data || []).map((entry) => ({
+          ...entry,
+          name: typeof entry.name === 'string' && entry.name.trim() ? entry.name : safeLedgerName,
+        }))
+        setEntries(normalizedEntries)
+      }
+      setLoading(false)
+    }
+    fetchEntriesForLedger()
+  }, [selectedLedger])
 
   useEffect(() => {
-    if (!downloadOpen) return
-    function handleOutsideClick(event) {
-      if (downloadRef.current && !downloadRef.current.contains(event.target)) {
-        setDownloadOpen(false)
-      }
+    const ledgerIds = ledgers.map((ledger) => ledger.id).filter(Boolean)
+    if (ledgerIds.length === 0) {
+      setAllLedgerEntries([])
+      return
     }
-    document.addEventListener('mousedown', handleOutsideClick)
-    return () => document.removeEventListener('mousedown', handleOutsideClick)
-  }, [downloadOpen])
+
+    async function fetchAllLedgerEntries() {
+      const { data, error } = await supabase
+        .from('ledger_entries')
+        .select('*')
+        .in('ledger_id', ledgerIds)
+      if (error) {
+        setAllLedgerEntries([])
+        return
+      }
+      setAllLedgerEntries(data || [])
+    }
+
+    fetchAllLedgerEntries()
+  }, [ledgers])
 
   const rowsWithBalance = useMemo(() => {
     const userBalances = new Map()
@@ -217,13 +350,18 @@ function Ledger({ onLogout }) {
       const debit = Number(entry.debit) || 0
       const attachments = normalizeAttachments(entry)
       const safeDate = toIsoDateOrNow(entry.date)
-      const userKey = entry.name.trim().toLowerCase()
+      const safeName =
+        typeof entry.name === 'string' && entry.name.trim()
+          ? entry.name
+          : selectedLedger?.name || selectedClient || 'Unknown'
+      const userKey = safeName.trim().toLowerCase()
       const previousBalance = userBalances.get(userKey) || 0
       const amount = previousBalance + credit - debit
       userBalances.set(userKey, amount)
 
       return {
         ...entry,
+        name: safeName,
         slNo: index + 1,
         date: safeDate,
         credit,
@@ -233,37 +371,44 @@ function Ledger({ onLogout }) {
         attachmentNames: attachments.map((item) => item.name).join(' '),
       }
     })
-  }, [entries])
+  }, [entries, selectedLedger, selectedClient])
 
-  const totals = useMemo(() => {
-    return rowsWithBalance.reduce(
-      (acc, row) => {
-        acc.amount += row.credit - row.debit
-        return acc
-      },
-      { amount: 0 },
-    )
-  }, [rowsWithBalance])
+  const ledgerSummaryRows = useMemo(() => {
+    const entriesByLedgerId = new Map()
 
-  const userSummaryRows = useMemo(() => {
-    const userMap = new Map()
-
-    rowsWithBalance.forEach((row) => {
-      const userKey = row.name.trim().toLowerCase()
-      const existing = userMap.get(userKey)
-
-      userMap.set(userKey, {
-        ...row,
-        id: `user-${userKey}`,
-        userKey,
-        txCount: (existing?.txCount || 0) + 1,
-      })
+    allLedgerEntries.forEach((entry) => {
+      const list = entriesByLedgerId.get(entry.ledger_id) || []
+      list.push(entry)
+      entriesByLedgerId.set(entry.ledger_id, list)
     })
 
-    return Array.from(userMap.values())
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((row, index) => ({ ...row, slNo: index + 1 }))
-  }, [rowsWithBalance])
+    return ledgers.map((ledger, index) => {
+      const safeName = typeof ledger.name === 'string' ? ledger.name.trim() : ''
+      const ledgerEntries = entriesByLedgerId.get(ledger.id) || []
+      const latestEntry = [...ledgerEntries].sort((a, b) => {
+        const aTime = new Date(toIsoDateOrNow(a.date)).getTime()
+        const bTime = new Date(toIsoDateOrNow(b.date)).getTime()
+        return bTime - aTime
+      })[0]
+      const amount = ledgerEntries.reduce((sum, entry) => {
+        return sum + ((Number(entry.credit) || 0) - (Number(entry.debit) || 0))
+      }, 0)
+      const attachments = normalizeAttachments(latestEntry || ledger)
+
+      return {
+        ...ledger,
+        slNo: index + 1,
+        name: safeName,
+        work: latestEntry?.work || ledger.work || '-',
+        date: latestEntry?.date || ledger.date || '',
+        amount,
+        txCount: ledgerEntries.length,
+        remarks: latestEntry?.remarks || ledger.remarks || '',
+        attachments,
+        attachmentNames: attachments.map((item) => item.name).join(' '),
+      }
+    })
+  }, [ledgers, allLedgerEntries])
 
   const yearOptions = useMemo(() => {
     const years = new Set()
@@ -273,19 +418,29 @@ function Ledger({ onLogout }) {
       years.add(String(year))
     }
 
-    entries.forEach((entry) => {
-      const dateKey = toDateKey(entry.date)
+    ledgerSummaryRows.forEach((row) => {
+      const dateKey = toDateKey(row.date)
       if (dateKey) years.add(dateKey.slice(0, 4))
     })
 
     return Array.from(years).sort((a, b) => Number(a) - Number(b))
-  }, [entries])
+  }, [ledgerSummaryRows])
 
   const dateFilteredRows = useMemo(() => {
-    return userSummaryRows.filter(
+    return ledgerSummaryRows.filter(
       (row) => isMatchingMonthYear(row.date, listMonth, listYear),
     )
-  }, [userSummaryRows, listMonth, listYear])
+  }, [ledgerSummaryRows, listMonth, listYear])
+
+  const totals = useMemo(() => {
+    return dateFilteredRows.reduce(
+      (acc, row) => {
+        acc.amount += row.amount
+        return acc
+      },
+      { amount: 0 },
+    )
+  }, [dateFilteredRows])
 
   const filteredRows = useMemo(() => {
     const keyword = searchText.trim().toLowerCase()
@@ -377,18 +532,27 @@ function Ledger({ onLogout }) {
   async function handleChange(event) {
     const { name, value, files } = event.target
     if (name === 'file') {
+      setError('')
       const pickedFiles = Array.from(files || [])
       if (!pickedFiles.length) {
-        setForm((prev) => ({ ...prev, attachments: [] }))
+        return
+      }
+      if (form.attachments.length + pickedFiles.length > MAX_ATTACHMENTS) {
+        setError(`You can attach up to ${MAX_ATTACHMENTS} files.`)
+        event.target.value = ''
         return
       }
 
       try {
-        const uploaded = await readFilesAsDataUrls(pickedFiles)
-        setForm((prev) => ({ ...prev, attachments: uploaded }))
-      } catch {
-        setForm((prev) => ({ ...prev, attachments: [] }))
+        const inlineAttachments = await convertFilesToInlineAttachments(pickedFiles)
+        setForm((prev) => ({
+          ...prev,
+          attachments: [...prev.attachments, ...inlineAttachments],
+        }))
+      } catch (readError) {
+        setError(`Attachment read failed: ${readError?.message || 'Please try again.'}`)
       }
+      event.target.value = ''
     } else {
       setForm((prev) => ({ ...prev, [name]: value }))
     }
@@ -418,11 +582,23 @@ function Ledger({ onLogout }) {
     setHistorySearchText('')
     setHistoryMonth('')
     setHistoryYear('')
+    // Find the ledger by name and set as selectedLedger
+    const ledger = ledgers.find((l) => l.name.trim().toLowerCase() === name.trim().toLowerCase())
+    if (ledger) {
+      setSelectedLedger(ledger)
+    }
     setView('history')
   }
 
-  function handleAddTransactionForClient(name) {
-    openAddView(name, true, 'history')
+  function handleAddTransactionForClient(name, returnView = 'history') {
+    if (returnView === 'history') {
+      setSelectedClient(name)
+      const ledger = ledgers.find((l) => l.name.trim().toLowerCase() === name.trim().toLowerCase())
+      if (ledger) {
+        setSelectedLedger(ledger)
+      }
+    }
+    openAddView(name, true, returnView)
   }
 
   function handleDownloadHistoryExcel() {
@@ -620,72 +796,158 @@ function Ledger({ onLogout }) {
     doc.save(fileName)
   }
 
-  function handleAddEntry(event) {
+  async function handleAddEntry(event) {
     event.preventDefault()
+    if (isSaving) return
+    setError('')
 
+    const name = form.name.trim()
+    const work = form.work.trim()
     const credit = Number(form.credit) || 0
     const debit = Number(form.debit) || 0
 
-    if (!form.name.trim() || (!isNameLocked && !form.work.trim())) {
+    if (!name) {
+      setError('Name is required.')
       return
     }
 
-    const now = new Date()
-    let dateValue = now.toISOString()
+    if (!work) {
+      setError('Work is required.')
+      return
+    }
 
-    if (form.date) {
-      const [year, month, day] = form.date.split('-').map(Number)
-      if (year && month && day) {
-        const selectedWithCurrentTime = new Date(
-          year,
-          month - 1,
-          day,
-          now.getHours(),
-          now.getMinutes(),
-          now.getSeconds(),
-          now.getMilliseconds(),
-        )
-        dateValue = selectedWithCurrentTime.toISOString()
+    if (credit <= 0 && debit <= 0) {
+      setError('Enter credit or debit amount.')
+      return
+    }
+
+    setIsSaving(true)
+
+    try {
+      const now = new Date()
+      let dateValue = now.toISOString()
+
+      if (form.date) {
+        const [year, month, day] = form.date.split('-').map(Number)
+        if (year && month && day) {
+          const selectedWithCurrentTime = new Date(
+            year,
+            month - 1,
+            day,
+            now.getHours(),
+            now.getMinutes(),
+            now.getSeconds(),
+            now.getMilliseconds(),
+          )
+          dateValue = selectedWithCurrentTime.toISOString()
+        }
       }
-    }
 
-    const nextEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name:
-        entries.find((entry) => entry.name.trim().toLowerCase() === form.name.trim().toLowerCase())?.name ||
-        form.name.trim(),
-      work: form.work.trim(),
-      date: dateValue,
-      credit,
-      debit,
-      remarks: form.remarks.trim(),
-      attachments: form.attachments,
-      // Keep legacy fields for old UI/data compatibility.
-      file: form.attachments[0]?.data || null,
-      fileName: form.attachments[0]?.name || '',
-    }
+      // Find or create ledger for the given name
+      const ledgerName = name
+      let ledger = ledgers.find((l) => l.name.trim().toLowerCase() === ledgerName.toLowerCase())
 
-    setEntries((prev) => [...prev, nextEntry])
-    if (!searchText.trim()) {
-      setCurrentPage(Math.ceil((entries.length + 1) / rowsPerPage))
-    }
+      async function addTxWithLedger(ledgerId) {
+        const nextEntry = {
+          ledger_id: ledgerId,
+          work,
+          date: dateValue,
+          credit,
+          debit,
+          remarks: form.remarks.trim(),
+          attachments: form.attachments,
+        }
+        setLoading(true)
+        setError('')
+        const { data, error } = await supabase
+          .from('ledger_entries')
+          .insert([nextEntry])
+          .select()
+        if (error) {
+          setError('Failed to add entry')
+        } else {
+          const fallbackName = form.name.trim() || selectedLedger?.name || selectedClient || 'Unknown'
+          const normalizedNewEntries = (data || []).map((entry) => ({
+            ...entry,
+            name: typeof entry.name === 'string' && entry.name.trim() ? entry.name : fallbackName,
+          }))
+          setEntries((prev) => [...prev, ...normalizedNewEntries])
+          setAllLedgerEntries((prev) => [...prev, ...(data || [])])
+          if (!searchText.trim()) {
+            setCurrentPage(Math.ceil((entries.length + 1) / rowsPerPage))
+          }
+          resetForm()
+          setView(addReturnView)
+        }
+        setLoading(false)
+      }
 
-    resetForm()
-    setView(addReturnView)
+      if (ledger) {
+        await addTxWithLedger(ledger.id)
+      } else {
+        setLoading(true)
+        setError('')
+let userId = null
+
+try {
+  const userStr = sessionStorage.getItem('user')
+  if (userStr) {
+    const user = JSON.parse(userStr)
+    userId = user?.id
+  }
+} catch (err) {
+  console.error('Error reading user:', err)
+}
+
+        if (!userId) {
+          alert('You must be logged in to save transactions.')
+          setError('User not authenticated')
+          setLoading(false)
+          return
+        }
+
+        const newLedgerPayload = {
+          name: ledgerName,
+          user_id: userId,
+          work,
+          date: dateValue,
+          credit,
+          debit,
+          remarks: form.remarks.trim() || null,
+          attachments: form.attachments.length > 0 ? form.attachments : null,
+        }
+
+        const { data, error } = await supabase
+          .from('ledgers')
+          .insert([newLedgerPayload])
+          .select()
+        if (error || !data || !data[0]) {
+          setError('Failed to create ledger')
+          setLoading(false)
+          return
+        }
+        setLedgers((prev) => [...prev, data[0]])
+        await addTxWithLedger(data[0].id)
+      }
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   return (
     <main className="app-shell">
       <section className="card">
         {view === 'list' && (
-          <header className="app-header">
-            <img src="/logo.svg" alt="Ledger logo" className="app-logo" />
-            <div className="app-header-text">
-              <h1>{APP_CONFIG.appName}</h1>
-              <p className="app-tagline">{APP_CONFIG.tagline}</p>
-            </div>
-            <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
-          </header>
+          <>
+            <header className="app-header">
+              <img src="/logo.svg" alt="Ledger logo" className="app-logo" />
+              <div className="app-header-text">
+                <h1>{APP_CONFIG.appName}</h1>
+                <p className="app-tagline">{APP_CONFIG.tagline}</p>
+              </div>
+              <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
+            </header>
+          </>
         )}
 
         {view === 'add' ? (
@@ -708,7 +970,7 @@ function Ledger({ onLogout }) {
                 placeholder="Work"
                 value={form.work}
                 onChange={handleChange}
-                required={!isNameLocked}
+                required
               />
               <input
                 name="credit"
@@ -759,10 +1021,16 @@ function Ledger({ onLogout }) {
                   </>
                 )}
               </label>
+              {error && (
+                <p className="login-error" style={{ gridColumn: 'span 2', margin: 0 }}>
+                  {error}
+                </p>
+              )}
               <div className="form-actions" style={{ gridColumn: 'span 2' }}>
                 <button
                   type="button"
                   className="ghost back-btn"
+                  disabled={isSaving}
                   onClick={() => {
                     resetForm()
                     setView(addReturnView)
@@ -770,7 +1038,9 @@ function Ledger({ onLogout }) {
                 >
                   Back
                 </button>
-                <button type="submit">Save Transaction</button>
+                <button type="submit" disabled={isSaving}>
+                  {isSaving ? 'Saving...' : 'Save Transaction'}
+                </button>
               </div>
             </form>
           </>
@@ -882,7 +1152,7 @@ function Ledger({ onLogout }) {
                   </div>
                 )}
               </div>
-              <button type="button" className="table-action-btn" onClick={() => handleAddTransactionForClient(selectedClient)}>
+              <button type="button" className="table-action-btn" onClick={() => handleAddTransactionForClient(selectedClient, 'history')}>
                 Add Txn
               </button>
             </div>
@@ -902,34 +1172,44 @@ function Ledger({ onLogout }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredHistoryRows.map((row) => (
-                    <tr key={row.id}>
-                      <td data-label="Sl No">{row.slNo}</td>
-                      <td data-label="Work">{row.work}</td>
-                      <td data-label="Date">{formatDateTime(row.date)}</td>
-                      <td data-label="Credit (Rs)">{formatAmount(row.credit)}</td>
-                      <td data-label="Debit (Rs)">{formatAmount(row.debit)}</td>
-                      <td data-label="Balance (Rs)">{formatAmount(row.balance)}</td>
-                      <td data-label="Remarks">{row.remarks || '-'}</td>
-                      <td data-label="Attachment">
-                        {row.attachments.length > 0 ? (
-                          <div className="attachment-list">
-                            {row.attachments.map((item) => (
-                              <a
-                                key={`${row.id}-${item.name}`}
-                                href={item.data}
-                                download={item.name}
-                                className="file-download-link"
-                              >
-                                📎 {item.name}
-                              </a>
-                            ))}
-                          </div>
-                        ) : '-'}
+                  {loading ? (
+                    <tr>
+                      <td colSpan="8" className="table-loading-cell">
+                        <div className="table-loader" role="status" aria-live="polite">
+                          <span className="table-loader-dot" />
+                          Loading history...
+                        </div>
                       </td>
                     </tr>
-                  ))}
-                  {filteredHistoryRows.length === 0 && (
+                  ) : filteredHistoryRows.length > 0 ? (
+                    filteredHistoryRows.map((row) => (
+                      <tr key={row.id}>
+                        <td data-label="Sl No">{row.slNo}</td>
+                        <td data-label="Work">{row.work}</td>
+                        <td data-label="Date">{formatDateTime(row.date)}</td>
+                        <td data-label="Credit (Rs)">{formatAmount(row.credit)}</td>
+                        <td data-label="Debit (Rs)">{formatAmount(row.debit)}</td>
+                        <td data-label="Balance (Rs)">{formatAmount(row.balance)}</td>
+                        <td data-label="Remarks">{row.remarks || '-'}</td>
+                        <td data-label="Attachment">
+                          {row.attachments.length > 0 ? (
+                            <div className="attachment-list">
+                              {row.attachments.map((item) => (
+                                <a
+                                  key={`${row.id}-${item.name}`}
+                                  href={item.url}
+                                  download={item.name}
+                                  className="file-download-link"
+                                >
+                                  📎 {item.name}
+                                </a>
+                              ))}
+                            </div>
+                          ) : '-'}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
                     <tr>
                       <td colSpan="8">No history for this client</td>
                     </tr>
@@ -1002,34 +1282,44 @@ function Ledger({ onLogout }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedRows.map((row) => (
-                    <tr key={row.id}>
-                      <td data-label="Sl No">{row.slNo}</td>
-                      <td data-label="Name">{row.name}</td>
-                      <td data-label="Last Work">{row.work}</td>
-                      <td data-label="Last Date">{formatDateTime(row.date)}</td>
-                      <td data-label="Balance (Rs)">{formatAmount(row.amount)}</td>
-                      <td data-label="Action" className="actions-cell">
-                        <div className="actions-wrap">
-                          <button
-                            type="button"
-                            className="ghost table-action-btn"
-                            onClick={() => handleOpenHistory(row.name)}
-                          >
-                            Statement
-                          </button>
-                          <button
-                            type="button"
-                            className="table-action-btn"
-                            onClick={() => handleAddTransactionForClient(row.name)}
-                          >
-                            Add Txn
-                          </button>
+                  {loading ? (
+                    <tr>
+                      <td colSpan="6" className="table-loading-cell">
+                        <div className="table-loader" role="status" aria-live="polite">
+                          <span className="table-loader-dot" />
+                          Loading ledgers...
                         </div>
                       </td>
                     </tr>
-                  ))}
-                  {paginatedRows.length === 0 && (
+                  ) : paginatedRows.length > 0 ? (
+                    paginatedRows.map((row) => (
+                      <tr key={row.id}>
+                        <td data-label="Sl No">{row.slNo}</td>
+                        <td data-label="Name">{row.name}</td>
+                        <td data-label="Last Work">{row.work}</td>
+                        <td data-label="Last Date">{formatDateTime(row.date)}</td>
+                        <td data-label="Balance (Rs)">{formatAmount(row.amount)}</td>
+                        <td data-label="Action" className="actions-cell">
+                          <div className="actions-wrap">
+                            <button
+                              type="button"
+                              className="ghost table-action-btn"
+                              onClick={() => handleOpenHistory(row.name)}
+                            >
+                              Statement
+                            </button>
+                            <button
+                              type="button"
+                              className="table-action-btn"
+                              onClick={() => handleAddTransactionForClient(row.name, 'list')}
+                            >
+                              Add Txn
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
                     <tr>
                       <td colSpan="6">No ledgers</td>
                     </tr>

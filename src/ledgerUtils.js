@@ -8,14 +8,9 @@ function toIsoDateOrNow(value) {
 function normalizeAttachments(entry) {
   if (Array.isArray(entry.attachments) && entry.attachments.length > 0) {
     return entry.attachments
-      .filter((item) => item && item.name && item.data)
-      .map((item) => ({ name: item.name, data: item.data }))
+      .filter((item) => item && item.name && (item.url || item.data))
+      .map((item) => ({ name: item.name, url: item.url || item.data }))
   }
-
-  if (entry.file && entry.fileName) {
-    return [{ name: entry.fileName, data: entry.file }]
-  }
-
   return []
 }
 
@@ -29,7 +24,11 @@ export function buildHistoryRows({
   const target = selectedClient.trim().toLowerCase()
   if (!target) return []
 
-  const matchedEntries = entries.filter((entry) => entry.name.trim().toLowerCase() === target)
+  const matchedEntries = entries.filter((entry) => {
+    const entryName =
+      typeof entry.name === 'string' && entry.name.trim() ? entry.name : selectedClient
+    return entryName.trim().toLowerCase() === target
+  })
   const dateFilteredEntries = matchedEntries.filter((entry) =>
     isMatchingMonthYear(entry.date, historyMonth, historyYear),
   )

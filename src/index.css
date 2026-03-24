@@ -522,6 +522,48 @@ button:disabled {
   padding: 8px 10px;
 }
 
+.forgot-link {
+  justify-self: end;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.forgot-link:hover {
+  background: transparent;
+  color: var(--accent-2);
+  text-decoration: underline;
+}
+
+.login-info {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.forgot-title {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.forgot-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.forgot-back-btn,
+.forgot-submit-btn {
+  width: 100%;
+}
+
 .login-btn {
   width: 100%;
   padding: 11px;
@@ -637,6 +679,37 @@ td {
 thead th,
 tfoot th {
   background: #f8fafc;
+}
+
+.table-loading-cell {
+  padding: 14px 10px;
+}
+
+.table-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.table-loader-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: table-loader-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes table-loader-pulse {
+  0%, 100% {
+    transform: scale(0.8);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
 }
 
 @media (max-width: 680px) {
