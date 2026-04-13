@@ -36,8 +36,8 @@ export function buildHistoryRows({
   const sortedEntries = [...dateFilteredEntries].sort((a, b) => {
     const aDate = new Date(toIsoDateOrNow(a.date)).getTime()
     const bDate = new Date(toIsoDateOrNow(b.date)).getTime()
-    if (aDate !== bDate) return aDate - bDate
-    return String(a.id).localeCompare(String(b.id))
+    if (aDate !== bDate) return bDate - aDate
+    return String(b.id).localeCompare(String(a.id))
   })
 
   let runningBalance = 0

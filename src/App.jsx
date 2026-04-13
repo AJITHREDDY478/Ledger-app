@@ -49,6 +49,15 @@ function toIsoDateOrNow(value) {
   return parsed.toISOString()
 }
 
+function getSessionUser() {
+  try {
+    const rawUser = sessionStorage.getItem('user')
+    return rawUser ? JSON.parse(rawUser) : null
+  } catch {
+    return null
+  }
+}
+
 function downloadBlob(content, fileName, mimeType) {
   const blob = new Blob([content], { type: mimeType })
   const url = URL.createObjectURL(blob)
@@ -226,6 +235,8 @@ function Ledger({ onLogout }) {
       setSelectedLedger(ledger)
       setView('history')
     }
+  const sessionUser = getSessionUser()
+  const isAjithUser = sessionUser?.username?.trim().toLowerCase() === 'ajith'
   const [entries, setEntries] = useState([])
   const [ledgers, setLedgers] = useState([])
   const [allLedgerEntries, setAllLedgerEntries] = useState([])
@@ -256,6 +267,10 @@ function Ledger({ onLogout }) {
   const [historyYear, setHistoryYear] = useState('')
   const [downloadOpen, setDownloadOpen] = useState(false)
   const downloadRef = useRef(null)
+  const [editingEntry, setEditingEntry] = useState(null)
+  const [editForm, setEditForm] = useState(null)
+  const [isEditSaving, setIsEditSaving] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(null)
 
 
 
@@ -267,7 +282,7 @@ function Ledger({ onLogout }) {
       const { data, error } = await supabase
         .from('ledgers')
         .select('*')
-        .order('name', { ascending: true })
+        .order('date', { ascending: false })
       if (error) {
         setError('Failed to load ledgers')
         setLedgers([])
@@ -292,7 +307,7 @@ function Ledger({ onLogout }) {
         .from('ledger_entries')
         .select('*')
         .eq('ledger_id', selectedLedger.id)
-        .order('date', { ascending: true })
+        .order('date', { ascending: false })
       if (error) {
         setError('Failed to load entries')
         setEntries([])
@@ -923,6 +938,125 @@ try {
     }
   }
 
+  function handleDeleteEntry(row) {
+    setConfirmDelete(row)
+  }
+
+  async function confirmDeleteEntry() {
+    const row = confirmDelete
+    setConfirmDelete(null)
+    const { error: deleteError } = await supabase
+      .from('ledger_entries')
+      .delete()
+      .eq('id', row.id)
+    if (deleteError) {
+      setError('Failed to delete entry.')
+    } else {
+      setEntries((prev) => prev.filter((e) => e.id !== row.id))
+      setAllLedgerEntries((prev) => prev.filter((e) => e.id !== row.id))
+    }
+  }
+
+  function openEditModal(row) {
+    setEditingEntry(row)
+    setEditForm({
+      work: row.work || '',
+      date: toDateKey(row.date),
+      credit: row.credit !== 0 ? String(row.credit) : '',
+      debit: row.debit !== 0 ? String(row.debit) : '',
+      remarks: row.remarks || '',
+      attachments: row.attachments || [],
+    })
+    setError('')
+  }
+
+  function closeEditModal() {
+    setEditingEntry(null)
+    setEditForm(null)
+    setError('')
+  }
+
+  async function handleEditChange(event) {
+    const { name, value, files } = event.target
+    if (name === 'file') {
+      setError('')
+      const pickedFiles = Array.from(files || [])
+      if (!pickedFiles.length) return
+      const currentAttachments = editForm.attachments || []
+      if (currentAttachments.length + pickedFiles.length > MAX_ATTACHMENTS) {
+        setError(`You can attach up to ${MAX_ATTACHMENTS} files.`)
+        event.target.value = ''
+        return
+      }
+      try {
+        const inlineAttachments = await convertFilesToInlineAttachments(pickedFiles)
+        setEditForm((prev) => ({
+          ...prev,
+          attachments: [...prev.attachments, ...inlineAttachments],
+        }))
+      } catch (readError) {
+        setError(`Attachment read failed: ${readError?.message || 'Please try again.'}`)
+      }
+      event.target.value = ''
+    } else {
+      setEditForm((prev) => ({ ...prev, [name]: value }))
+    }
+  }
+
+  async function handleSaveEdit(event) {
+    event.preventDefault()
+    if (isEditSaving || !editingEntry) return
+    setError('')
+
+    const work = editForm.work.trim()
+    const credit = Number(editForm.credit) || 0
+    const debit = Number(editForm.debit) || 0
+
+    if (!work) { setError('Work is required.'); return }
+    if (credit <= 0 && debit <= 0) { setError('Enter credit or debit amount.'); return }
+
+    setIsEditSaving(true)
+    try {
+      const now = new Date()
+      let dateValue = now.toISOString()
+      if (editForm.date) {
+        const [year, month, day] = editForm.date.split('-').map(Number)
+        if (year && month && day) {
+          const d = new Date(year, month - 1, day, now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds())
+          dateValue = d.toISOString()
+        }
+      }
+
+      const updates = {
+        work,
+        date: dateValue,
+        credit,
+        debit,
+        remarks: editForm.remarks.trim(),
+        attachments: editForm.attachments,
+      }
+
+      const { error: updateError } = await supabase
+        .from('ledger_entries')
+        .update(updates)
+        .eq('id', editingEntry.id)
+
+      if (updateError) {
+        setError('Failed to update entry.')
+      } else {
+        setEntries((prev) =>
+          prev.map((e) => (e.id === editingEntry.id ? { ...e, ...updates } : e))
+        )
+        setAllLedgerEntries((prev) =>
+          prev.map((e) => (e.id === editingEntry.id ? { ...e, ...updates } : e))
+        )
+        closeEditModal()
+      }
+    } finally {
+      setIsEditSaving(false)
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="card">
@@ -1158,12 +1292,13 @@ try {
                     <th>Balance (Rs)</th>
                     <th>Remarks</th>
                     <th>Attachment</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan="8" className="table-loading-cell">
+                      <td colSpan="9" className="table-loading-cell">
                         <div className="table-loader" role="status" aria-live="polite">
                           <span className="table-loader-dot" />
                           Loading history...
@@ -1196,11 +1331,31 @@ try {
                             </div>
                           ) : '-'}
                         </td>
+                        <td data-label="Action" className="actions-cell">
+                          <div className="actions-wrap">
+                            <button
+                              type="button"
+                              className="ghost table-action-btn"
+                              onClick={() => openEditModal(row)}
+                            >
+                              Edit
+                            </button>
+                            {isAjithUser && (
+                              <button
+                                type="button"
+                                className="table-action-btn danger-btn"
+                                onClick={() => handleDeleteEntry(row)}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="8">No history for this client</td>
+                      <td colSpan="9">No history for this client</td>
                     </tr>
                   )}
                 </tbody>
@@ -1265,6 +1420,7 @@ try {
                     <th>Sl No</th>
                     <th>Name</th>
                     <th>Last Work</th>
+                    <th>Count</th>
                     <th>Last Date</th>
                     <th>Balance (Rs)</th>
                     <th>Action</th>
@@ -1273,7 +1429,7 @@ try {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan="6" className="table-loading-cell">
+                      <td colSpan="7" className="table-loading-cell">
                         <div className="table-loader" role="status" aria-live="polite">
                           <span className="table-loader-dot" />
                           Loading ledgers...
@@ -1286,6 +1442,7 @@ try {
                         <td data-label="Sl No">{row.slNo}</td>
                         <td data-label="Name">{row.name}</td>
                         <td data-label="Last Work">{row.work}</td>
+                        <td data-label="Count">{isAjithUser ? row.txCount : '-'}</td>
                         <td data-label="Last Date">{formatDateTime(row.date)}</td>
                         <td data-label="Balance (Rs)">{formatAmount(row.amount)}</td>
                         <td data-label="Action" className="actions-cell">
@@ -1310,7 +1467,7 @@ try {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="6">No ledgers</td>
+                      <td colSpan="7">No ledgers</td>
                     </tr>
                   )}
                 </tbody>
@@ -1363,6 +1520,106 @@ try {
           <p className="app-footer-secondary">Developed by <strong>{APP_CONFIG.developerName}</strong></p>
         </footer>
       </section>
+
+      {confirmDelete && (
+        <div className="edit-modal-overlay" onClick={() => setConfirmDelete(null)}>
+          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-dialog-icon">🗑️</div>
+            <h3 className="confirm-dialog-title">Delete Transaction?</h3>
+            <p className="confirm-dialog-msg">
+              <strong>"{confirmDelete.work}"</strong> will be permanently deleted. This cannot be undone.
+            </p>
+            <div className="confirm-dialog-actions">
+              <button type="button" className="ghost back-btn" onClick={() => setConfirmDelete(null)}>
+                Cancel
+              </button>
+              <button type="button" className="table-action-btn danger-btn" onClick={confirmDeleteEntry}>
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingEntry && editForm && (
+        <div className="edit-modal-overlay" onClick={closeEditModal}>
+          <div className="edit-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="edit-modal-title-bar">
+              <h2 className="page-title">Edit Transaction</h2>
+              <button type="button" className="ghost edit-modal-close" onClick={closeEditModal}>✕</button>
+            </div>
+            <form className="entry-form" onSubmit={handleSaveEdit}>
+              <input
+                name="work"
+                placeholder="Work"
+                value={editForm.work}
+                onChange={handleEditChange}
+                required
+              />
+              <input
+                name="credit"
+                type="number"
+                min="0"
+                placeholder="Credit"
+                value={editForm.credit}
+                onChange={handleEditChange}
+              />
+              <input
+                name="debit"
+                type="number"
+                min="0"
+                placeholder="Debit"
+                value={editForm.debit}
+                onChange={handleEditChange}
+              />
+              <label className="date-field">
+                Date
+                <input
+                  name="date"
+                  type="date"
+                  value={editForm.date}
+                  onChange={handleEditChange}
+                />
+              </label>
+              <textarea
+                name="remarks"
+                placeholder="Remarks"
+                value={editForm.remarks}
+                onChange={handleEditChange}
+                rows={2}
+                style={{ gridColumn: 'span 2', resize: 'vertical' }}
+              />
+              <label className="date-field" style={{ gridColumn: 'span 2' }}>
+                Attachment
+                <input
+                  name="file"
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                  onChange={handleEditChange}
+                />
+                {editForm.attachments.length > 0 && (
+                  <>
+                    <span className="file-name-hint">{editForm.attachments.length} file(s)</span>
+                    <span className="file-name-list">{editForm.attachments.map((item) => item.name).join(', ')}</span>
+                  </>
+                )}
+              </label>
+              {error && (
+                <p className="login-error" style={{ gridColumn: 'span 2', margin: 0 }}>{error}</p>
+              )}
+              <div className="form-actions" style={{ gridColumn: 'span 2' }}>
+                <button type="button" className="ghost back-btn" disabled={isEditSaving} onClick={closeEditModal}>
+                  Cancel
+                </button>
+                <button type="submit" disabled={isEditSaving}>
+                  {isEditSaving ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
