@@ -230,17 +230,6 @@ function Ledger({ onLogout }) {
   const [ledgers, setLedgers] = useState([])
   const [allLedgerEntries, setAllLedgerEntries] = useState([])
   const [selectedLedger, setSelectedLedger] = useState(null)
-    // Fetch ledgers from Supabase on mount
-    useEffect(() => {
-      async function fetchLedgers() {
-        const { data, error } = await supabase
-          .from('ledgers')
-          .select('*')
-          .order('name', { ascending: true })
-        if (!error) setLedgers(data || [])
-      }
-      fetchLedgers()
-    }, [])
   const [loading, setLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState('')

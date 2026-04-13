@@ -52,41 +52,52 @@ export function Login({ onLogin }) {
     e.preventDefault()
     setError('')
     setSuccess('')
-    // Query user from Supabase
-    const { data, error: queryError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('username', username.trim())
-      .single()
-
-    if (queryError || !data) {
-      setError('Invalid username or password.')
+    const normalizedUsername = username.trim()
+    if (!normalizedUsername || !password) {
+      setError('Please enter both username and password.')
       return
     }
 
-    const match = await bcrypt.compare(password, data.password_hash)
-    if (match) {
-      // ✅ STORE USER HERE (THIS IS YOUR MISSING PART)
+    try {
+      // Query user from Supabase
+      const { data, error: queryError } = await supabase
+        .from('users')
+        .select('id,username,password_hash')
+        .eq('username', normalizedUsername)
+        .single()
+
+      if (queryError || !data) {
+        setError('Invalid username or password.')
+        return
+      }
+
+      const match = await bcrypt.compare(password, data.password_hash)
+      if (!match) {
+        setError('Invalid username or password.')
+        return
+      }
+
       sessionStorage.setItem(
-        "user",
+        'user',
         JSON.stringify({
           id: data.id,
-          username: data.username
-        })
+          username: data.username,
+        }),
       )
 
       if (rememberMe) {
         localStorage.setItem(
           REMEMBER_ME_KEY,
-          JSON.stringify({ username: username.trim(), password }),
+          JSON.stringify({ username: normalizedUsername, password }),
         )
       } else {
         localStorage.removeItem(REMEMBER_ME_KEY)
       }
 
       sessionStorage.setItem(SESSION_KEY, 'true')
-
       onLogin()
+    } catch {
+      setError('Unable to sign in right now. Please try again.')
     }
   }
 
@@ -119,7 +130,7 @@ export function Login({ onLogin }) {
     // Query user from Supabase
     const { data, error: queryError } = await supabase
       .from('users')
-      .select('*')
+      .select('id,username,password_hash')
       .eq('username', username.trim())
       .single()
 
