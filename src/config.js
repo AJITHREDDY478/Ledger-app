@@ -14,4 +14,8 @@ export const APP_CONFIG = {
     username: env.VITE_LOGIN_USERNAME || '',
     password: env.VITE_LOGIN_PASSWORD || '',
   },
+  googleDrive: {
+    clientId: env.VITE_GOOGLE_CLIENT_ID || '',
+    backupFolderId: env.VITE_GDRIVE_BACKUP_FOLDER_ID || '',
+  },
 }

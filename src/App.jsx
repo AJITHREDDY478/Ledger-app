@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { Login, isLoggedIn, SESSION_KEY } from './Login'
 import { APP_CONFIG, supabase } from './config'
 import { buildHistoryRows } from './ledgerUtils'
+import { isDriveConfigured, uploadHtmlToDrive } from './googleDrive'
 
 const STORAGE_KEY = 'ledger-entries-v3'
 const MONTH_OPTIONS = [
@@ -215,6 +216,202 @@ function formatDateTime(value) {
   return `${day}-${month}-${year} ${hour12}:${minutes} ${meridiem}`
 }
 
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]),
+  )
+}
+
+function buildBackupHtml(data) {
+  const json = JSON.stringify(data).replace(/<\/script>/gi, '<\\/script>')
+  const title = `${data.app} Backup`
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${escapeHtml(title)}</title>
+<style>
+  :root { --line:#e5e7eb; --muted:#64748b; --text:#0f172a; --bg:#f8fafc; --card:#fff; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);}
+  .shell{max-width:1100px;margin:0 auto;padding:20px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:0 1px 2px rgba(0,0,0,.04);}
+  header h1{margin:0 0 4px;font-size:22px}
+  .tag{color:var(--muted);font-size:13px;margin:0}
+  .meta{display:flex;flex-wrap:wrap;gap:14px;margin:14px 0 18px;font-size:12px;color:var(--muted)}
+  .meta b{color:var(--text)}
+  .summary-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px}
+  .sc{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafafa}
+  .sc span{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .sc strong{font-size:16px}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  .toolbar input{flex:1;min-width:200px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:14px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#f1f5f9;font-weight:600}
+  tr.clickable{cursor:pointer}
+  tr.clickable:hover{background:#f8fafc}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .pos{color:#15803d}.neg{color:#b91c1c}
+  .back{display:inline-block;margin-bottom:10px;background:none;border:1px solid var(--line);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:13px}
+  .back:hover{background:#f1f5f9}
+  .hidden{display:none}
+  h2{margin:0 0 10px;font-size:18px}
+  .att{display:block;font-size:11px;color:var(--muted)}
+  footer{margin-top:14px;font-size:11px;color:var(--muted);text-align:center}
+  @media print { .toolbar,.back,.hide-print{display:none!important} body{background:#fff} .card{border:0;box-shadow:none} }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="card">
+    <header>
+      <h1 id="app-title"></h1>
+      <p class="tag" id="app-tag"></p>
+      <div class="meta">
+        <span>Exported: <b id="exported-at"></b></span>
+        <span>By: <b id="exported-by"></b></span>
+        <span>Ledgers: <b id="t-ledgers"></b></span>
+        <span>Transactions: <b id="t-txns"></b></span>
+        <span>Net Balance: <b id="t-balance"></b></span>
+      </div>
+    </header>
+
+    <section id="list-view">
+      <div class="summary-cards">
+        <div class="sc"><span>Ledgers</span><strong id="sc-ledgers">0</strong></div>
+        <div class="sc"><span>Transactions</span><strong id="sc-txns">0</strong></div>
+        <div class="sc"><span>Net Balance</span><strong id="sc-balance">0</strong></div>
+      </div>
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Search by name, work..." />
+      </div>
+      <table>
+        <thead><tr>
+          <th>Sl No</th><th>Name</th><th>Last Work</th><th>Count</th><th>Last Date</th><th class="num">Balance (Rs)</th>
+        </tr></thead>
+        <tbody id="list-body"></tbody>
+      </table>
+    </section>
+
+    <section id="history-view" class="hidden">
+      <button class="back" id="btn-back">&larr; Back</button>
+      <h2 id="h-name"></h2>
+      <div class="summary-cards">
+        <div class="sc"><span>Credit</span><strong id="h-credit">0</strong></div>
+        <div class="sc"><span>Debit</span><strong id="h-debit">0</strong></div>
+        <div class="sc"><span>Balance</span><strong id="h-balance">0</strong></div>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Sl No</th><th>Date</th><th>Work</th><th class="num">Credit (Rs)</th><th class="num">Debit (Rs)</th><th class="num">Balance (Rs)</th><th>Remarks</th>
+        </tr></thead>
+        <tbody id="history-body"></tbody>
+      </table>
+    </section>
+
+    <footer class="hide-print">Self-contained snapshot \u2014 open this file directly in a browser.</footer>
+  </div>
+</div>
+
+<script id="ledger-data" type="application/json">${json}</script>
+<script>
+(function(){
+  var DATA = JSON.parse(document.getElementById('ledger-data').textContent);
+  var inr = new Intl.NumberFormat('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  function fmt(n){ n = Number(n)||0; return inr.format(n); }
+  function fmtDate(v){
+    if(!v) return '-';
+    var d = new Date(v); if(isNaN(d.getTime())) return v;
+    var dd=String(d.getDate()).padStart(2,'0');
+    var mo=d.toLocaleString('en-US',{month:'short'});
+    var yy=d.getFullYear();
+    var h=d.getHours()%12||12;
+    var mm=String(d.getMinutes()).padStart(2,'0');
+    var ap=d.getHours()>=12?'PM':'AM';
+    return dd+'-'+mo+'-'+yy+' '+h+':'+mm+' '+ap;
+  }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];}); }
+  function balCls(n){ return Number(n)>=0?'pos':'neg'; }
+
+  document.getElementById('app-title').textContent = DATA.app + ' Backup';
+  document.getElementById('app-tag').textContent = DATA.tagline || '';
+  document.getElementById('exported-at').textContent = fmtDate(DATA.exportedAt);
+  document.getElementById('exported-by').textContent = DATA.exportedBy || '-';
+  document.getElementById('t-ledgers').textContent = DATA.totalLedgers;
+  document.getElementById('t-txns').textContent = DATA.totalTxns;
+  document.getElementById('t-balance').textContent = fmt(DATA.totalBalance);
+  document.getElementById('sc-ledgers').textContent = DATA.totalLedgers;
+  document.getElementById('sc-txns').textContent = DATA.totalTxns;
+  document.getElementById('sc-balance').textContent = fmt(DATA.totalBalance);
+
+  var listBody = document.getElementById('list-body');
+  var search = document.getElementById('search');
+
+  function renderList(filter){
+    var q = (filter||'').trim().toLowerCase();
+    var rows = DATA.summary.filter(function(r){
+      if(!q) return true;
+      return [r.name, r.lastWork, r.balance, r.txCount].join(' ').toLowerCase().indexOf(q) !== -1;
+    });
+    listBody.innerHTML = rows.map(function(r,i){
+      return '<tr class="clickable" data-id="'+esc(r.id)+'">'+
+        '<td>'+(i+1)+'</td>'+
+        '<td>'+esc(r.name)+'</td>'+
+        '<td>'+esc(r.lastWork)+'</td>'+
+        '<td>'+r.txCount+'</td>'+
+        '<td>'+esc(fmtDate(r.lastDate))+'</td>'+
+        '<td class="num '+balCls(r.balance)+'">'+fmt(r.balance)+'</td>'+
+      '</tr>';
+    }).join('') || '<tr><td colspan="6" style="text-align:center;color:#64748b">No ledgers</td></tr>';
+  }
+  renderList('');
+
+  search.addEventListener('input', function(e){ renderList(e.target.value); });
+
+  listBody.addEventListener('click', function(e){
+    var tr = e.target.closest('tr.clickable'); if(!tr) return;
+    showHistory(tr.getAttribute('data-id'));
+  });
+
+  document.getElementById('btn-back').addEventListener('click', function(){
+    document.getElementById('history-view').classList.add('hidden');
+    document.getElementById('list-view').classList.remove('hidden');
+    window.scrollTo({top:0,behavior:'smooth'});
+  });
+
+  function showHistory(id){
+    var meta = DATA.summary.find(function(s){ return String(s.id)===String(id); });
+    var rows = DATA.history[id] || [];
+    document.getElementById('h-name').textContent = meta ? meta.name : 'Ledger';
+    var tbody = document.getElementById('history-body');
+    var totC=0,totD=0;
+    rows.forEach(function(r){ totC+=Number(r.credit)||0; totD+=Number(r.debit)||0; });
+    document.getElementById('h-credit').textContent = fmt(totC);
+    document.getElementById('h-debit').textContent = fmt(totD);
+    document.getElementById('h-balance').textContent = fmt(totC-totD);
+    tbody.innerHTML = rows.map(function(r){
+      return '<tr>'+
+        '<td>'+r.slNo+'</td>'+
+        '<td>'+esc(fmtDate(r.date))+'</td>'+
+        '<td>'+esc(r.work)+(r.attachments&&r.attachments.length?'<span class="att">'+r.attachments.length+' attachment(s)</span>':'')+'</td>'+
+        '<td class="num">'+fmt(r.credit)+'</td>'+
+        '<td class="num">'+fmt(r.debit)+'</td>'+
+        '<td class="num '+balCls(r.balance)+'">'+fmt(r.balance)+'</td>'+
+        '<td>'+esc(r.remarks||'-')+'</td>'+
+      '</tr>';
+    }).join('') || '<tr><td colspan="7" style="text-align:center;color:#64748b">No transactions</td></tr>';
+    document.getElementById('list-view').classList.add('hidden');
+    document.getElementById('history-view').classList.remove('hidden');
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+})();
+</script>
+</body>
+</html>`
+}
+
 function App() {
   const [loggedIn, setLoggedIn] = useState(() => isLoggedIn())
 
@@ -260,6 +457,7 @@ function Ledger({ onLogout }) {
   const [addReturnView, setAddReturnView] = useState('list')
   const [selectedClient, setSelectedClient] = useState('')
   const [isNameLocked, setIsNameLocked] = useState(false)
+  const [addMode, setAddMode] = useState('new-ledger') // 'new-ledger' | 'new-entry'
   const [historySearchText, setHistorySearchText] = useState('')
   const [listMonth, setListMonth] = useState('')
   const [listYear, setListYear] = useState('')
@@ -271,6 +469,8 @@ function Ledger({ onLogout }) {
   const [editForm, setEditForm] = useState(null)
   const [isEditSaving, setIsEditSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [isUploadingBackup, setIsUploadingBackup] = useState(false)
+  const [backupNotice, setBackupNotice] = useState(null) // { fileName, link }
 
 
 
@@ -386,32 +586,39 @@ function Ledger({ onLogout }) {
       entriesByLedgerId.set(entry.ledger_id, list)
     })
 
-    return ledgers.map((ledger, index) => {
-      const safeName = typeof ledger.name === 'string' ? ledger.name.trim() : ''
-      const ledgerEntries = entriesByLedgerId.get(ledger.id) || []
-      const latestEntry = [...ledgerEntries].sort((a, b) => {
-        const aTime = new Date(toIsoDateOrNow(a.date)).getTime()
-        const bTime = new Date(toIsoDateOrNow(b.date)).getTime()
-        return bTime - aTime
-      })[0]
-      const amount = ledgerEntries.reduce((sum, entry) => {
-        return sum + ((Number(entry.credit) || 0) - (Number(entry.debit) || 0))
-      }, 0)
-      const attachments = normalizeAttachments(latestEntry || ledger)
+    return ledgers
+      .map((ledger) => {
+        const safeName = typeof ledger.name === 'string' ? ledger.name.trim() : ''
+        const ledgerEntries = entriesByLedgerId.get(ledger.id) || []
+        const latestEntry = [...ledgerEntries].sort((a, b) => {
+          const aTime = new Date(toIsoDateOrNow(a.date)).getTime()
+          const bTime = new Date(toIsoDateOrNow(b.date)).getTime()
+          return bTime - aTime
+        })[0]
+        const amount = ledgerEntries.reduce((sum, entry) => {
+          return sum + ((Number(entry.credit) || 0) - (Number(entry.debit) || 0))
+        }, 0)
+        const attachments = normalizeAttachments(latestEntry || ledger)
 
-      return {
-        ...ledger,
-        slNo: index + 1,
-        name: safeName,
-        work: latestEntry?.work || ledger.work || '-',
-        date: latestEntry?.date || ledger.date || '',
-        amount,
-        txCount: ledgerEntries.length,
-        remarks: latestEntry?.remarks || ledger.remarks || '',
-        attachments,
-        attachmentNames: attachments.map((item) => item.name).join(' '),
-      }
-    })
+        return {
+          ...ledger,
+          name: safeName,
+          work: latestEntry?.work || ledger.work || '-',
+          date: latestEntry?.date || ledger.date || '',
+          amount,
+          txCount: ledgerEntries.length,
+          remarks: latestEntry?.remarks || ledger.remarks || '',
+          attachments,
+          attachmentNames: attachments.map((item) => item.name).join(' '),
+        }
+      })
+      .sort((a, b) => {
+        // Sort by latest transaction date (desc) so most recently active ledgers float to top.
+        const aTime = a.date ? new Date(a.date).getTime() : 0
+        const bTime = b.date ? new Date(b.date).getTime() : 0
+        return bTime - aTime
+      })
+      .map((row, index) => ({ ...row, slNo: index + 1 }))
   }, [ledgers, allLedgerEntries])
 
   const yearOptions = useMemo(() => {
@@ -575,34 +782,135 @@ function Ledger({ onLogout }) {
     setIsNameLocked(lockName)
   }
 
-  function openAddView(prefillName = '', lockName = false, returnView = 'list') {
+  function openAddView(prefillName = '', lockName = false, returnView = 'list', mode = 'new-ledger') {
     resetForm(prefillName, lockName)
     setAddReturnView(returnView)
+    setAddMode(mode)
     setView('add')
   }
 
-  function handleOpenHistory(name) {
-    setSelectedClient(name)
+  function handleOpenHistory(ledger) {
+    if (!ledger) return
+    setSelectedClient(ledger.name)
     setHistorySearchText('')
     setHistoryMonth('')
     setHistoryYear('')
-    // Find the ledger by name and set as selectedLedger
-    const ledger = ledgers.find((l) => l.name.trim().toLowerCase() === name.trim().toLowerCase())
-    if (ledger) {
-      setSelectedLedger(ledger)
-    }
+    setSelectedLedger(ledger)
     setView('history')
   }
 
-  function handleAddTransactionForClient(name, returnView = 'history') {
+  function handleAddTransactionForLedger(ledger, returnView = 'history') {
+    if (!ledger) return
     if (returnView === 'history') {
-      setSelectedClient(name)
-      const ledger = ledgers.find((l) => l.name.trim().toLowerCase() === name.trim().toLowerCase())
-      if (ledger) {
-        setSelectedLedger(ledger)
-      }
+      setSelectedClient(ledger.name)
+      setSelectedLedger(ledger)
     }
-    openAddView(name, true, returnView)
+    openAddView(ledger.name, true, returnView, 'new-entry')
+  }
+
+  function buildBackupArtifact() {
+    const exportedAt = new Date().toISOString()
+    const exportedBy = sessionUser?.username || 'unknown'
+
+    const entriesByLedgerId = new Map()
+    allLedgerEntries.forEach((entry) => {
+      const list = entriesByLedgerId.get(entry.ledger_id) || []
+      list.push(entry)
+      entriesByLedgerId.set(entry.ledger_id, list)
+    })
+
+    const summary = ledgers
+      .map((ledger) => {
+        const list = entriesByLedgerId.get(ledger.id) || []
+        const sorted = [...list].sort(
+          (a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime(),
+        )
+        const latest = sorted[0]
+        const balance = list.reduce(
+          (s, e) => s + ((Number(e.credit) || 0) - (Number(e.debit) || 0)),
+          0,
+        )
+        return {
+          id: ledger.id,
+          name: (ledger.name || '').trim() || 'Unknown',
+          lastWork: latest?.work || ledger.work || '-',
+          lastDate: latest?.date || ledger.date || '',
+          txCount: list.length,
+          balance,
+        }
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.lastDate || 0).getTime() - new Date(a.lastDate || 0).getTime(),
+      )
+
+    const history = {}
+    ledgers.forEach((ledger) => {
+      const list = (entriesByLedgerId.get(ledger.id) || [])
+        .slice()
+        .sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime())
+      let running = 0
+      const rows = list.map((entry, idx) => {
+        const credit = Number(entry.credit) || 0
+        const debit = Number(entry.debit) || 0
+        running += credit - debit
+        return {
+          slNo: idx + 1,
+          date: entry.date || '',
+          work: entry.work || '-',
+          credit,
+          debit,
+          balance: running,
+          remarks: entry.remarks || '',
+          attachments: Array.isArray(entry.attachments) ? entry.attachments : [],
+        }
+      })
+      history[ledger.id] = rows.reverse().map((r, idx) => ({ ...r, slNo: idx + 1 }))
+    })
+
+    const totalBalance = summary.reduce((s, r) => s + r.balance, 0)
+    const totalTxns = summary.reduce((s, r) => s + r.txCount, 0)
+
+    const data = {
+      app: APP_CONFIG.appName,
+      tagline: APP_CONFIG.tagline,
+      exportedAt,
+      exportedBy,
+      totalLedgers: summary.length,
+      totalTxns,
+      totalBalance,
+      summary,
+      history,
+    }
+
+    const html = buildBackupHtml(data)
+    const stamp = exportedAt.replace(/[:.]/g, '-').slice(0, 19)
+    return { html, fileName: `ledger-backup-${stamp}.html` }
+  }
+
+  async function handleBackupUploadToDrive() {
+    if (!isDriveConfigured()) {
+      setError(
+        'Google Drive not configured. Set VITE_GOOGLE_CLIENT_ID and VITE_GDRIVE_BACKUP_FOLDER_ID in .env.',
+      )
+      return
+    }
+    setError('')
+    setBackupNotice(null)
+    setIsUploadingBackup(true)
+    try {
+      const { html, fileName } = buildBackupArtifact()
+      const result = await uploadHtmlToDrive({ fileName, html })
+      setBackupNotice({
+        fileName,
+        link: result?.webViewLink || '',
+        uploadedAt: new Date(),
+      })
+    } catch (err) {
+      setError(`Upload failed: ${err?.message || 'Unknown error'}`)
+    } finally {
+      setIsUploadingBackup(false)
+    }
   }
 
   function handleDownloadHistoryExcel() {
@@ -847,9 +1155,12 @@ function Ledger({ onLogout }) {
         }
       }
 
-      // Find or create ledger for the given name
+      // Decide whether to attach to an existing ledger or create a new one.
+      // - Add Txn button (addMode='new-entry') -> attach to the exact ledger (selectedLedger) by id.
+      // - Add New button (addMode='new-ledger') -> always create a brand-new ledger row,
+      //   even if a ledger with the same name already exists.
       const ledgerName = name
-      let ledger = ledgers.find((l) => l.name.trim().toLowerCase() === ledgerName.toLowerCase())
+      let ledger = addMode === 'new-entry' ? selectedLedger : null
 
       async function addTxWithLedger(ledgerId) {
         const nextEntry = {
@@ -939,21 +1250,60 @@ try {
   }
 
   function handleDeleteEntry(row) {
-    setConfirmDelete(row)
+    setConfirmDelete({ kind: 'entry', row })
   }
 
-  async function confirmDeleteEntry() {
-    const row = confirmDelete
+  function handleDeleteLedger(ledger) {
+    setConfirmDelete({ kind: 'ledger', row: ledger })
+  }
+
+  async function confirmDeleteAction() {
+    const target = confirmDelete
     setConfirmDelete(null)
-    const { error: deleteError } = await supabase
-      .from('ledger_entries')
-      .delete()
-      .eq('id', row.id)
-    if (deleteError) {
-      setError('Failed to delete entry.')
-    } else {
-      setEntries((prev) => prev.filter((e) => e.id !== row.id))
-      setAllLedgerEntries((prev) => prev.filter((e) => e.id !== row.id))
+    if (!target) return
+
+    if (target.kind === 'entry') {
+      const row = target.row
+      const { error: deleteError } = await supabase
+        .from('ledger_entries')
+        .delete()
+        .eq('id', row.id)
+      if (deleteError) {
+        setError('Failed to delete entry.')
+      } else {
+        setEntries((prev) => prev.filter((e) => e.id !== row.id))
+        setAllLedgerEntries((prev) => prev.filter((e) => e.id !== row.id))
+      }
+      return
+    }
+
+    if (target.kind === 'ledger') {
+      const ledger = target.row
+      // Delete child entries first, then the ledger row.
+      const { error: entriesErr } = await supabase
+        .from('ledger_entries')
+        .delete()
+        .eq('ledger_id', ledger.id)
+      if (entriesErr) {
+        setError('Failed to delete ledger entries.')
+        return
+      }
+      const { error: ledgerErr } = await supabase
+        .from('ledgers')
+        .delete()
+        .eq('id', ledger.id)
+      if (ledgerErr) {
+        setError('Failed to delete ledger.')
+        return
+      }
+      setLedgers((prev) => prev.filter((l) => l.id !== ledger.id))
+      setAllLedgerEntries((prev) => prev.filter((e) => e.ledger_id !== ledger.id))
+      if (selectedLedger?.id === ledger.id) {
+        setSelectedLedger(null)
+        setEntries([])
+        setSelectedClient('')
+        setView('list')
+      }
     }
   }
 
@@ -1275,7 +1625,7 @@ try {
                   </div>
                 )}
               </div>
-              <button type="button" className="table-action-btn" onClick={() => handleAddTransactionForClient(selectedClient, 'history')}>
+              <button type="button" id="add-txn-btn" className="table-action-btn" onClick={() => selectedLedger && handleAddTransactionForLedger(selectedLedger, 'history')}>
                 Add Txn
               </button>
             </div>
@@ -1365,10 +1715,52 @@ try {
         ) : (
           <>
             <div className="list-actions">
-              <button type="button" className="add-new-btn" onClick={() => openAddView()}>
+              <button type="button" id="add-new-btn" className="add-new-btn" onClick={() => openAddView('', false, 'list', 'new-ledger')}>
                 + Add New
               </button>
+              {isAjithUser && (
+                <button
+                  type="button"
+                  id="backup-upload-btn"
+                  className="table-action-btn"
+                  onClick={handleBackupUploadToDrive}
+                  disabled={loading || ledgers.length === 0 || isUploadingBackup}
+                  title="Upload backup HTML to Google Drive"
+                >
+                  {isUploadingBackup ? 'Uploading…' : '☁ Upload to Drive'}
+                </button>
+              )}
             </div>
+
+            {backupNotice && (
+              <div className="backup-notice" role="status" aria-live="polite">
+                <span className="backup-notice-icon" aria-hidden="true">✓</span>
+                <div className="backup-notice-text">
+                  <strong>Backup uploaded successfully</strong>
+                  <span>{backupNotice.fileName}</span>
+                </div>
+                <div className="backup-notice-actions">
+                  {backupNotice.link && (
+                    <a
+                      className="ghost table-action-btn"
+                      href={backupNotice.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Open in Drive
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    className="backup-notice-close"
+                    aria-label="Dismiss"
+                    onClick={() => setBackupNotice(null)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="list-toolbar">
               <div className="month-year-row">
@@ -1450,17 +1842,30 @@ try {
                             <button
                               type="button"
                               className="ghost table-action-btn"
-                              onClick={() => handleOpenHistory(row.name)}
+                              onClick={() => handleOpenHistory(row)}
                             >
                               Statement
                             </button>
                             <button
                               type="button"
-                              className="table-action-btn"
-                              onClick={() => handleAddTransactionForClient(row.name, 'list')}
+                              className="table-action-btn add-txn-row-btn"
+                              data-action="add-txn"
+                              data-ledger-id={row.id}
+                              onClick={() => handleAddTransactionForLedger(row, 'list')}
                             >
                               Add Txn
                             </button>
+                            {isAjithUser && (
+                              <button
+                                type="button"
+                                className="table-action-btn danger-btn"
+                                data-action="delete-ledger"
+                                data-ledger-id={row.id}
+                                onClick={() => handleDeleteLedger(row)}
+                              >
+                                Delete
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1525,15 +1930,25 @@ try {
         <div className="edit-modal-overlay" onClick={() => setConfirmDelete(null)}>
           <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="confirm-dialog-icon">🗑️</div>
-            <h3 className="confirm-dialog-title">Delete Transaction?</h3>
+            <h3 className="confirm-dialog-title">
+              {confirmDelete.kind === 'ledger' ? 'Delete Ledger?' : 'Delete Transaction?'}
+            </h3>
             <p className="confirm-dialog-msg">
-              <strong>"{confirmDelete.work}"</strong> will be permanently deleted. This cannot be undone.
+              {confirmDelete.kind === 'ledger' ? (
+                <>
+                  Ledger <strong>"{confirmDelete.row.name}"</strong> and all its transactions will be permanently deleted. This cannot be undone.
+                </>
+              ) : (
+                <>
+                  <strong>"{confirmDelete.row.work}"</strong> will be permanently deleted. This cannot be undone.
+                </>
+              )}
             </p>
             <div className="confirm-dialog-actions">
               <button type="button" className="ghost back-btn" onClick={() => setConfirmDelete(null)}>
                 Cancel
               </button>
-              <button type="button" className="table-action-btn danger-btn" onClick={confirmDeleteEntry}>
+              <button type="button" className="table-action-btn danger-btn" onClick={confirmDeleteAction}>
                 Yes, Delete
               </button>
             </div>

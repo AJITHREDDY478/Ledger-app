@@ -31,6 +31,7 @@ export function Login({ onLogin }) {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [forgotError, setForgotError] = useState('')
   const [forgotSuccess, setForgotSuccess] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     try {
@@ -50,6 +51,7 @@ export function Login({ onLogin }) {
 
   async function handleSubmit(e) {
     e.preventDefault()
+    if (submitting) return
     setError('')
     setSuccess('')
     const normalizedUsername = username.trim()
@@ -58,6 +60,7 @@ export function Login({ onLogin }) {
       return
     }
 
+    setSubmitting(true)
     try {
       // Query user from Supabase
       const { data, error: queryError } = await supabase
@@ -98,6 +101,8 @@ export function Login({ onLogin }) {
       onLogin()
     } catch {
       setError('Unable to sign in right now. Please try again.')
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -240,7 +245,16 @@ export function Login({ onLogin }) {
               Forgot password?
             </button>
 
-            <button type="submit" className="login-btn">Sign In</button>
+            <button type="submit" className="login-btn" disabled={submitting} aria-busy={submitting}>
+              {submitting ? (
+                <span className="login-btn-loading">
+                  <span className="login-spinner" aria-hidden="true"></span>
+                  Signing in…
+                </span>
+              ) : (
+                'Sign In'
+              )}
+            </button>
           </form>
         ) : (
 
