@@ -1916,6 +1916,11 @@ try {
               >
                 Next
               </button>
+              <span className="pagination-summary">
+                {filteredRows.length === 0
+                  ? 'Showing 0 of 0'
+                  : `Showing ${pageStartIndex + 1}-${Math.min(pageStartIndex + rowsPerPage, filteredRows.length)} of ${filteredRows.length}`}
+              </span>
             </div>
           </>
         )}

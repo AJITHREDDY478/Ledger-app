@@ -464,6 +464,11 @@ h1 {
   flex-shrink: 0;
 }
 
+.pagination-toolbar .pagination-summary {
+  margin-left: auto;
+  color: var(--muted, #64748b);
+}
+
 .pagination-toolbar select {
   font: inherit;
   border-radius: 8px;
